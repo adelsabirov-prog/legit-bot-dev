@@ -1,4 +1,4 @@
-import os, base64, logging, io
+import os, base64, logging, io, time, re
 import telebot
 from telebot import types
 import requests
@@ -49,23 +49,36 @@ SYSTEM="""Ты — экспертная система разбора LEGIT·CHE
 
 СПИСОК «НЕ ПРОВЕРЯЕТСЯ»: детали из этого списка помечай «➖ не проверяется», выводов по ним не делай; вердикт выноси только по проверенным и укажи это в плашке."""
 
-MODE_LIST="""Продукт: «{name}». Определи форм-фактор (банка, тюбик, флакон с помпой, стик помады, кушон, тушь, палетка и т.п.) и выдай два блока простым клиентским языком:
+MODE_LIST="""Продукт: «{name}». Определи форм-фактор (банка, тюбик, флакон с помпой, стик помады, кушон, тушь, палетка и т.п.) и выдай два блока простым клиентским языком.
 
 ОБЯЗАТЕЛЬНО (ядро проверки):
-[нумерованные 4-5 кадров под форм-фактор: тара лицо, коробка лицо, батч-код на таре макро, батч-код на коробке макро]
+[строго нумерованный список 4-5 кадров под форм-фактор: тара лицо, коробка лицо, батч-код на таре макро, батч-код на коробке макро]
 
-ДОБАВЬТЕ, ЧТОБЫ РАЗБОР ШЁЛ ПО ВСЕМ 6 ДЕТАЛЯМ ЧЕК-ЛИСТА:
-[2-3 вторичных ракурса под форм-фактор: текстура на белом листе, крышка и мембрана, коробка зад и дно, механизм, комплектация]
+ЖЕЛАТЕЛЬНО (чтобы разбор шёл по всем 6 деталям чек-листа):
+[нумерованные 2-3 вторичных ракурса под форм-фактор: текстура на белом листе, крышка и мембрана, коробка зад и дно, механизм, комплектация]
 
-В конце одной строкой: «Можно прислать несколько фото одним сообщением.»
 Без других вступлений. Без звёздочек и маркдауна — обычный текст. Не упоминай «слои знаний», «режимы» и внутренние правила — только список снимков."""
 
-MODE0I="""РЕЖИМ 0 (инкрементальный). Продукт: «{name}». Нужные ракурсы: {shots}.
-Посмотри на фото и ответь СТРОГО в формате:
-ДЕТАЛЬ: [какая деталь из списка на фото; «не понял», если не ясно]
+MODE0C="""РЕЖИМ 0 (цепочка). Продукт: «{name}».
+Оставшиеся обязательные шаги:
+{remaining}
+На фото косметика или уход? Если явно другой предмет — строго одной строкой:
+ТИП: не косметика
+Иначе определи, какому из оставшихся шагов (по номеру) соответствует фото, и читаемо ли оно.
+Ответь СТРОГО в формате:
+ШАГ: [номер из списка; 0, если не подходит ни к одному]
 ЧИТАЕМО: да/нет
-СОВЕТ: [если нет — коротко как переснять: свет сбоку, без вспышки, камера параллельно]
-Если изображение размыто, пикселизировано или текст не различим отчётливо — это «нечитаемо». Не угадывай и не восстанавливай текст по размытому снимку."""
+СОВЕТ: [если нечитаемо — одним предложением как переснять]
+Если изображение размыто или текст не различим отчётливо — это «нечитаемо». Не угадывай текст."""
+
+MODE0I="""РЕЖИМ 0 (добавочные фото). Продукт: «{name}».
+Сначала определи: на фото косметика или уход? Если явно другой предмет — строго одной строкой:
+ТИП: не косметика
+Иначе ответь СТРОГО в формате:
+ДЕТАЛЬ: [какая деталь чек-листа на фото; «не понял», если не ясно]
+ЧИТАЕМО: да/нет
+СОВЕТ: [если нет — коротко как переснять]
+Если изображение размыто или текст не различим отчётливо — это «нечитаемо». Не угадывай текст."""
 
 MODE0F="""РЕЖИМ 0 (финальный). Продукт: «{name}». Клиент не может предоставить: {cannot}.
 Посмотри все фото и оцени каждую критическую деталь отдельно:
@@ -82,7 +95,7 @@ MISSING: [НАЗВАНИЯ деталей из 6 (не номера), по ко�
 MODE2="""РЕЖИМ 2. Дай финальный клиентский отчёт по продукту «{name}». Детали из списка «НЕ ПРОВЕРЯЕТСЯ» и детали без читаемых фото помечай «➖ не проверяется» без выводов по ним.
 БАТЧ И ГОД: если уверена в формате батча конкретного бренда — проверь согласованность года выпуска с дизайном упаковки, строкой дистрибьютора и линейкой; несоответствие — маркер (учитывается в детали 03). Если не уверена — не выводи дату и не делай из неё маркер.
 Формат — обычный текст, БЕЗ звёздочек и маркдауна:
-1) Плашка: эмодзи (🔴/️/🟢) + вердикт словами из триада + 1-2 предложения основания + отдельной строкой: «Вердикт вынесен по деталям: [список]».
+1) Плашка: эмодзи (🔴/⚠️/🟢) + вердикт словами из триада + 1-2 предложения основания + отдельной строкой: «Вердикт вынесен по деталям: [список]».
 2) Шесть деталей, по каждой строка статуса строго из набора (✅ проверено / ⚠️ сомнение / ❌ маркер / ➖ не проверяется; знак для непроверяемых — именно ➖, не тире) и 1-2 предложения обоснования:
 01 Упаковка и полиграфия
 02 Тара и литьё
@@ -96,7 +109,7 @@ MODE2="""РЕЖИМ 2. Дай финальный клиентский отчёт
 START_TEXT=("👋 Legit Check Cosmetics — проверка признаков подлинности косметики по фото.\n\n"
 "Как это работает:\n"
 "1. Напишите бренд и название продукта — подскажу, какие ракурсы снять.\n"
-"2. Пришлите фото. Лучше — как документ (скрепка 📎 → «Документ»): обычные фото Telegram сжимает, мелкие детали теряются. Обычные фото тоже принимаю.\n"
+"2. По шагам соберём обязательные кадры, желательные — пачкой.\n"
 "3. После подтверждения пригодности фото — оплата: 500 ₽ (Стандартный, до 3 ч) или 1000 ₽ (Экспресс, до 15 мин).\n"
 "4. Получаете структурированный отчёт с вердиктом.\n\n"
 "Напишите бренд и название продукта.\nПример: «Крем Loreal», «Помада Dior».")
@@ -105,13 +118,22 @@ HELP_TEXT=("Я бот LEGIT·CHECK: разбираю косметику по ф�
 "Стоимость: 500 ₽ (Стандартный, до 3 ч) или 1000 ₽ (Экспресс, до 15 мин).\n\n"
 "Чтобы начать, напишите бренд и название продукта.\nПример: «Крем Loreal», «Помада Dior».")
 
+FALLBACK_STEPS=["Лицо тары (общий вид)","Лицо коробки (общий вид)","Батч-код на таре (макро)","Батч-код на коробке (макро)"]
+
 def ask_qwen(images,user_text,model):
     content=[{"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b}"}} for b in images]
     content.append({"type":"text","text":user_text})
-    r=requests.post(BASE+"/chat/completions",
-        headers={"Authorization":"Bearer "+QWEN_KEY,"Content-Type":"application/json"},
-        json={"model":model,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]},
-        timeout=180)
+    r=None
+    for attempt in range(3):
+        r=requests.post(BASE+"/chat/completions",
+            headers={"Authorization":"Bearer "+QWEN_KEY,"Content-Type":"application/json"},
+            json={"model":model,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]},
+            timeout=180)
+        if r.status_code in (429,500,502,503):
+            logging.error("QWEN RETRY %s %s",r.status_code,r.text[:500])
+            time.sleep(4*(attempt+1))
+            continue
+        break
     if r.status_code!=200:
         logging.error("QWEN ERROR %s %s",r.status_code,r.text[:1500])
     r.raise_for_status()
@@ -133,10 +155,10 @@ def img_b64(m):
     return downscale_b64(r.content)
 
 def st(cid):
-    return S.setdefault(cid,{"name":"","photos":[],"shots":"","cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False})
+    return S.setdefault(cid,{"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False})
 
 def reset(cid):
-    S[cid]={"name":"","photos":[],"shots":"","cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False}
+    S[cid]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False}
     kb=types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("📄 Оферта",url=OFERTA),types.InlineKeyboardButton("🔒 Политика конфиденциальности",url=PRIVACY))
     bot.send_message(cid,START_TEXT,reply_markup=kb)
@@ -151,10 +173,43 @@ def clean_missing(s):
     bad=("нет","none","-","—","")
     return [x.strip() for x in s.split(",") if x.strip().lower() not in bad]
 
+def parse_steps(shots):
+    steps=[]; inb=False
+    for line in shots.splitlines():
+        l=line.strip(); u=l.upper()
+        if u.startswith("ОБЯЗАТЕЛЬНО"):
+            inb=True; continue
+        if inb:
+            if u.startswith("ЖЕЛАТЕЛЬНО") or u.startswith("ДОПОЛНИТЕЛЬНО"):
+                break
+            m=re.match(r"^(\d+)[\.\)]\s*(.+)$",l)
+            if m: steps.append(m.group(2).strip())
+            elif steps and not l:
+                break
+    return steps
+
+def wish_part(shots):
+    idx=shots.upper().find("ЖЕЛАТЕЛЬНО")
+    return shots[idx:] if idx>=0 else shots
+
+def first_open(s):
+    for i in range(len(s["queue"])):
+        if i not in s["closed"]:
+            return i
+    return -1
+
+def finish_chain(cid):
+    s=st(cid)
+    s["stage"]="photos"
+    warn=""
+    if s["cannot"]:
+        warn="\nОбратите внимание: "+", ".join(s["cannot"])+" — не будет проверяться."
+    bot.send_message(cid,f"✅ Обязательный блок собран.{warn}\n\n{wish_part(s['shots'])}\nДобавьте эти кадры одним сообщением или напишите «Готово». Если снять не получается — «не могу».")
+
 @bot.message_handler(commands=["start"])
 def start(m):
     parts=m.text.split()
-    S[m.chat.id]={"name":"","photos":[],"shots":"","cannot":[],"last_missing":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","comp_warned":False}
+    S[m.chat.id]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","comp_warned":False}
     kb=types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("📄 Оферта",url=OFERTA),types.InlineKeyboardButton("🔒 Политика конфиденциальности",url=PRIVACY))
     bot.send_message(m.chat.id,START_TEXT,reply_markup=kb)
@@ -177,21 +232,51 @@ def add_image(m):
         bot.send_message(cid,"Отчёт выдан. Для новой проверки напишите «Начать заново».")
         return
     b64,comp=img_b64(m)
-    s["photos"].append(b64)
     if comp and not s["comp_warned"]:
         s["comp_warned"]=True
         bot.send_message(cid,"⚠️ Фото пришло сжатым (как обычное фото). Мелкие детали — батч, полиграфия — могли потеряться. Для максимальной точности прикрепляйте как документ: скрепка 📎 → «Файл» или «Документ». Продолжаю разбор с тем, что есть.")
+    if s["stage"]=="chain":
+        remaining="\n".join(f"{i+1}. {s['queue'][i]}" for i in range(len(s["queue"])) if i not in s["closed"])
+        try:
+            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",remaining=remaining),QWEN_CHEAP)
+        except Exception:
+            logging.exception("mode0c")
+            bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
+            return
+        if "не косметика" in res.lower():
+            bot.send_message(cid,"📥 Получено, но это не косметика или уход — я проверяю только их. Пришлите фото нужного продукта или напишите «Начать заново».")
+            return
+        num="".join(ch for ch in parse(res,"ШАГ") if ch.isdigit())
+        n=int(num) if num else 0
+        if n<1 or n>len(s["queue"]) or (n-1) in s["closed"]:
+            bot.send_message(cid,"Этот кадр не подходит ни к одному из оставшихся шагов. Осталось:\n"+remaining)
+            return
+        if not parse(res,"ЧИТАЕМО").lower().startswith("да"):
+            bot.send_message(cid,f"📥 Шаг {n} ({s['queue'][n-1]}): нечитаемо. {parse(res,'СОВЕТ') or 'Переснимите при дневном свете, без вспышки.'} Пришлите новый кадр для этого шага.")
+            return
+        s["closed"].append(n-1)
+        s["photos"].append(b64)
+        ni=first_open(s)
+        if ni>=0:
+            bot.send_message(cid,f"✅ Шаг {n} принят. ➡️ Шаг {ni+1}/{len(s['queue'])}: {s['queue'][ni]}")
+        else:
+            finish_chain(cid)
+        return
     try:
-        res=ask_qwen([s["photos"][-1]],MODE0I.format(name=s["name"] or "?",shots=s["shots"] or "стандартный список"),QWEN_CHEAP)
+        res=ask_qwen([b64],MODE0I.format(name=s["name"] or "?"),QWEN_CHEAP)
     except Exception:
         logging.exception("mode0i")
         bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
         return
+    if "не косметика" in res.lower():
+        bot.send_message(cid,"📥 Получено, но это не косметика или уход — я проверяю только их. Пришлите фото нужного продукта или напишите «Начать заново».")
+        return
+    s["photos"].append(b64)
     det=parse(res,"ДЕТАЛЬ") or "фото"
     if parse(res,"ЧИТАЕМО").lower().startswith("да"):
         bot.send_message(cid,f"📥 Фото {len(s['photos'])} получено: {det}. Читаемо.")
     else:
-        bot.send_message(cid,f"📥 Фото {len(s['photos'])} получено: {det}, но нечитаемо. {parse(res,'СОВЕТ') or 'Переснимите при дневном свете, без вспышки.'}\nПереснимите или напишите «не могу».")
+        bot.send_message(cid,f"📥 Фото {len(s['photos'])} получено: {det}, но нечитаемо. {parse(res,'СОВЕТ') or 'Переснимите при дневном свете, без вспышки.'}")
 
 @bot.message_handler(func=lambda m: m.content_type=="text" and not m.text.startswith("/"))
 def text(m):
@@ -213,15 +298,40 @@ def text(m):
         if "?" in t or low in ("привет","здравствуйте","добрый день","добрый вечер","хай","ку") or low.startswith(("что это","как работает","сколько стоит","цена","кто ты","что умеешь")):
             bot.send_message(cid,HELP_TEXT)
             return
-        s["name"]=t; s["stage"]="photos"
+        s["name"]=t
         try:
             s["shots"]=ask_qwen([],MODE_LIST.format(name=t),QWEN_CHEAP)
         except Exception:
             logging.exception("mode_list")
-            s["shots"]=("1. Тара — лицо.\n2. Коробка — лицо.\n3. Батч-код на таре (макро).\n4. Батч-код на коробке (макро).\n"
-                        "5. Текстура на белом листе (макро).\n6. Крышка и мембрана/пломба.")
-        bot.send_message(cid,f"Принято, проверяем: {t}.\n\nЧто снять:\n{s['shots']}\n\nПрисылайте по одному или несколько одним сообщением. Лучше — как документ (📎 → «Документ»), обычные фото тоже принимаю. Когда закончите — напишите «Готово».")
-    elif s["stage"] in ("photos","retake"):
+            s["shots"]=("ОБЯЗАТЕЛЬНО (ядро проверки):\n1. Лицо тары.\n2. Лицо коробки.\n3. Батч-код на таре (макро).\n4. Батч-код на коробке (макро).\n"
+                        "ЖЕЛАТЕЛЬНО (чтобы разбор шёл по всем 6 деталям чек-листа):\n5. Текстура на белом листе (макро).\n6. Крышка и мембрана/пломба.")
+        s["queue"]=parse_steps(s["shots"]) or FALLBACK_STEPS[:]
+        s["closed"]=[]
+        s["stage"]="chain"
+        bot.send_message(cid,f"Принято, проверяем: {t}.\n\nСобираем обязательные кадры по шагам. Лучше — как документ (📎 → «Документ»), обычные фото тоже принимаю.\n\n➡️ Шаг 1/{len(s['queue'])}: {s['queue'][0]}")
+        return
+    if s["stage"]=="chain":
+        if t.lower() in ("не могу","нет","не получится"):
+            ni=first_open(s)
+            if ni>=0:
+                s["cannot"].append(s["queue"][ni])
+                s["closed"].append(ni)
+            n2=first_open(s)
+            if n2>=0:
+                bot.send_message(cid,f"⚠️ Пропускаю шаг. ➡️ Шаг {n2+1}/{len(s['queue'])}: {s['queue'][n2]}")
+            else:
+                finish_chain(cid)
+            return
+        if t.lower() in ("готово","done"):
+            ni=first_open(s)
+            if ni>=0:
+                bot.send_message(cid,"Осталось собрать обязательные кадры:\n"+"\n".join(f"{i+1}. {s['queue'][i]}" for i in range(len(s['queue'])) if i not in s['closed'])+"\nПришлите фото или напишите «не могу».")
+            else:
+                finish_chain(cid)
+            return
+        bot.send_message(cid,"Сейчас собираем обязательные кадры. Пришлите фото текущего шага или напишите «не могу».")
+        return
+    if s["stage"]=="photos":
         if t.lower() in ("готово","done"):
             audit(cid)
         elif t.lower() in ("не могу","нет","не получится"):
@@ -230,7 +340,8 @@ def text(m):
             audit(cid)
         else:
             bot.send_message(cid,"Записал. Добавляйте фото или напишите «Готово».")
-    elif s["stage"]=="tariffs":
+        return
+    if s["stage"]=="tariffs":
         bot.send_message(cid,"Выберите тариф кнопками ниже. Если кнопки пропали — напишите «Начать заново».")
     elif s["stage"]=="done":
         bot.send_message(cid,"Отчёт выдан. Для новой проверки напишите «Начать заново».")
@@ -262,7 +373,7 @@ def audit(cid):
         return
     missing=clean_missing(parse(res,"MISSING"))
     if missing:
-        s["stage"]="retake"; s["last_missing"]=missing
+        s["stage"]="photos"; s["last_missing"]=missing
         bot.send_message(cid,"Не хватает деталей: "+", ".join(missing)+".\nДобавьте фото или напишите «не могу» — продолжим разбор как есть, эти детали будут помечены «не проверяется».")
     else:
         s["stage"]="tariffs"
