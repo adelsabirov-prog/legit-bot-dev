@@ -43,7 +43,7 @@ SYSTEM="""Ты — экспертная система разбора LEGIT·CHE
 - 01 Упаковка и полиграфия — вся полиграфия: коробка (если есть), этикетка, крышка, гравировка. Нет коробки — оценивай по полиграфии тары.
 - Маркировка и батч-код — топ-вес; сверка батча на таре и коробке — главный ловитель переупаковки.
 - 04-06 — дополнительные: обычно усиливают/ослабляют; аномалия по ним может быть самостоятельным маркером.
-- Нормальная текстура/содержимое — односторонний маркер: не снимает 🔴/⚠️.
+- Нормальная текстура/содержимое — односторонний маркер: не снимает 🔴/️.
 - Конфликт «коробка читается как оригинал, тара — нет» — признак переупаковки, усиливает 🔴. Хорошая коробка не перевешивает маркеры по таре.
 
 СПИСОК «НЕ ПРОВЕРЯЕТСЯ»: детали из этого списка помечай «➖ не проверяется», выводов по ним не делай; вердикт выноси только по проверенным и укажи это в плашке."""
@@ -205,7 +205,7 @@ def step_msg(s,ni):
     return f"➡️ Шаг {ni+1}/{len(s['queue'])}: {s['queue'][ni]}"
 
 def end_chain(cid):
-    bot.send_message(cid,"✅ Все кадры собраны. Проверяю фото…")
+    bot.send_message(cid,"✅ Все кадры собраны.")
     audit(cid)
 
 @bot.message_handler(commands=["start"])
@@ -238,6 +238,7 @@ def add_image(m):
         s["comp_warned"]=True
         bot.send_message(cid,"⚠️ Фото пришло сжатым (как обычное фото). Мелкие детали — батч, полиграфия — могли потеряться. Для максимальной точности прикрепляйте как документ: скрепка 📎 → «Файл» или «Документ». Продолжаю разбор с тем, что есть.")
     if s["stage"]=="chain":
+        bot.send_message(cid,"📥 Загружаю фото…")
         remaining="\n".join(f"{i+1}. {s['queue'][i]}" for i in range(len(s["queue"])) if i not in s["closed"])
         try:
             res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",remaining=remaining),QWEN_CHEAP)
@@ -264,6 +265,7 @@ def add_image(m):
         else:
             end_chain(cid)
         return
+    bot.send_message(cid,"📥 Загружаю фото…")
     try:
         res=ask_qwen([b64],MODE0I.format(name=s["name"] or "?"),QWEN_CHEAP)
     except Exception:
@@ -301,6 +303,7 @@ def text(m):
             bot.send_message(cid,HELP_TEXT)
             return
         s["name"]=t
+        bot.send_message(cid,"📋 Составляю список кадров под продукт…")
         try:
             boxres=ask_qwen([],MODE_BOX.format(name=t),QWEN_CHEAP)
         except Exception:
@@ -362,6 +365,7 @@ def audit(cid):
     if not s["photos"]:
         bot.send_message(cid,"Фото не получены — проверка не может быть оказана, оплата не запрашивается.")
         return
+    bot.send_message(cid,"🔎 Проверяю фото…")
     try:
         res=ask_qwen(s["photos"],MODE0F.format(name=s["name"] or "?",cannot=", ".join(s["cannot"]) or "нет"),QWEN_CHEAP)
     except Exception:
@@ -422,7 +426,7 @@ def cb(c):
         kb.add(types.InlineKeyboardButton("📄 Получить отчёт",callback_data="report"))
         bot.send_message(cid,f"Тариф: {s['tariff']}. (Тестовый режим: оплата отключена.) Жмите кнопку — соберу отчёт.",reply_markup=kb)
     elif c.data=="report":
-        bot.send_message(cid,"Собираю отчёт…")
+        bot.send_message(cid,"🧾 Собираю отчёт…")
         note="\nНЕ ПРОВЕРЯЕТСЯ: "+", ".join(s["cannot"]) if s["cannot"] else ""
         try:
             rep=ask_qwen(s["photos"],MODE2.format(name=s["name"] or "?")+note,QWEN_MODEL)
