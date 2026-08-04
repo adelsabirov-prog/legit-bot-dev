@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN=os.getenv("BOT_TOKEN")
 QWEN_KEY=os.getenv("QWEN_API_KEY")
-QWEN_MODEL=os.getenv("QWEN_MODEL","qwen-vl-max")
-QWEN_CHEAP=os.getenv("QWEN_MODEL_CHEAP","qwen-vl-plus")
-BASE=os.getenv("DASHSCOPE_BASE_URL","https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+QWEN_MODEL=os.getenv("QWEN_MODEL","qwen/qwen2.5-vl-72b-instruct")
+QWEN_CHEAP=os.getenv("QWEN_MODEL_CHEAP","qwen/qwen2.5-vl-7b-instruct")
+BASE=os.getenv("DASHSCOPE_BASE_URL","https://openrouter.ai/api/v1")
 OFERTA="https://legitcheck-cosmetics.netlify.app/oferta.html"
 PRIVACY=OFERTA+"#privacy"
 
@@ -97,15 +97,17 @@ def ask_qwen(images,user_text,model):
         headers={"Authorization":"Bearer "+QWEN_KEY,"Content-Type":"application/json"},
         json={"model":model,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]},
         timeout=180)
+    if r.status_code!=200:
+        logging.error("QWEN ERROR %s %s",r.status_code,r.text[:1500])
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
 def downscale_b64(raw):
     im=Image.open(io.BytesIO(raw)).convert("RGB")
     w,h=im.size; m=max(w,h)
-    if m>2048:
-        k=2048/m; im=im.resize((int(w*k),int(h*k)),Image.LANCZOS)
-    buf=io.BytesIO(); im.save(buf,"JPEG",quality=90)
+    if m>1600:
+        k=1600/m; im=im.resize((int(w*k),int(h*k)),Image.LANCZOS)
+    buf=io.BytesIO(); im.save(buf,"JPEG",quality=85)
     return base64.b64encode(buf.getvalue()).decode()
 
 def img_b64(m):
