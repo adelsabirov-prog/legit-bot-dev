@@ -79,7 +79,7 @@ MISSING: [НАЗВАНИЯ деталей из 6 (не номера), по ко�
 MODE2="""РЕЖИМ 2. Дай финальный клиентский отчёт по продукту «{name}». Детали из списка «НЕ ПРОВЕРЯЕТСЯ» и детали без читаемых фото помечай «➖ не проверяется» без выводов по ним.
 БАТЧ И ГОД: если уверена в формате батча конкретного бренда — проверь согласованность года выпуска с дизайном упаковки, строкой дистрибьютора и линейкой; несоответствие — маркер (учитывается в детали 03). Если не уверена — не выводи дату и не делай из неё маркер.
 Формат — обычный текст, БЕЗ звёздочек и маркдауна:
-1) Плашка: эмодзи (🔴/️/🟢) + вердикт словами из триада + 1-2 предложения основания + отдельной строкой: «Вердикт вынесен по деталям: [список]».
+1) Плашка: эмодзи (🔴/⚠️/🟢) + вердикт словами из триада + 1-2 предложения основания + отдельной строкой: «Вердикт вынесен по деталям: [список]».
 2) Шесть деталей, по каждой строка статуса строго из набора (✅ проверено / ⚠️ сомнение / ❌ маркер / ➖ не проверяется; знак для непроверяемых — именно ➖, не тире) и 1-2 предложения обоснования:
 01 Упаковка и полиграфия
 02 Тара и литьё
@@ -96,6 +96,10 @@ START_TEXT=("👋 Legit Check Cosmetics — проверка признаков 
 "2. После подтверждения пригодности фото — оплата: 500 ₽ (Стандартный, до 3 ч) или 1000 ₽ (Экспресс, до 15 мин).\n"
 "3. Получаете структурированный отчёт с вердиктом.\n\n"
 "Напишите бренд и название продукта.\nПример: «Крем Loreal», «Помада Dior».")
+
+HELP_TEXT=("Я бот LEGIT·CHECK: разбираю косметику по фото на признаки несоответствия оригиналу — по чек-листу из 6 деталей.\n\n"
+"Стоимость: 500 ₽ (Стандартный, до 3 ч) или 1000 ₽ (Экспресс, до 15 мин).\n\n"
+"Чтобы начать, напишите бренд и название продукта.\nПример: «Крем Loreal», «Помада Dior».")
 
 def ask_qwen(images,user_text,model):
     content=[{"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b}"}} for b in images]
@@ -125,6 +129,12 @@ def img_b64(m):
 
 def st(cid):
     return S.setdefault(cid,{"name":"","photos":[],"shots":"","cannot":[],"last_missing":[],"stage":"name","source":"","tariff":""})
+
+def reset(cid):
+    S[cid]={"name":"","photos":[],"shots":"","cannot":[],"last_missing":[],"stage":"name","source":"","tariff":""}
+    kb=types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("📄 Оферта",url=OFERTA),types.InlineKeyboardButton("🔒 Политика конфиденциальности",url=PRIVACY))
+    bot.send_message(cid,START_TEXT,reply_markup=kb)
 
 def parse(res,key):
     for line in res.splitlines():
@@ -171,7 +181,23 @@ def add_image(m):
 @bot.message_handler(func=lambda m: m.content_type=="text" and not m.text.startswith("/"))
 def text(m):
     cid=m.chat.id; s=st(cid); t=m.text.strip()
+    if t.lower() in ("старт","начать","начать заново","заново"):
+        reset(cid)
+        return
+    if t.lower() in ("отмена","стоп","cancel"):
+        reset(cid)
+        bot.send_message(cid,"Проверка отменена. Для новой — напишите «Начать заново».")
+        return
+    if s["stage"]=="feedback":
+        logging.warning("FEEDBACK DOWN %s: %s",cid,t)
+        s["stage"]="done"
+        bot.send_message(cid,"Спасибо! Обратная связь записана и будет учтена.")
+        return
     if s["stage"]=="name":
+        low=t.lower()
+        if "?" in t or low in ("привет","здравствуйте","добрый день","добрый вечер","хай","ку") or low.startswith(("что это","как работает","сколько стоит","цена","кто ты","что умеешь")):
+            bot.send_message(cid,HELP_TEXT)
+            return
         s["name"]=t; s["stage"]="photos"
         try:
             s["shots"]=ask_qwen([],MODE_LIST.format(name=t),QWEN_CHEAP)
@@ -179,7 +205,7 @@ def text(m):
             logging.exception("mode_list")
             s["shots"]=("1. Тара — лицо.\n2. Коробка — лицо.\n3. Батч-код на таре (макро).\n4. Батч-код на коробке (макро).\n"
                         "5. Текстура на белом листе (макро).\n6. Крышка и мембрана/пломба.")
-        bot.send_message(cid,f"Принято, проверяем: {t}.\n\nПрикрепляйте фото как документ: скрепка 📎 → «Файл» или «Документ» → выберите фото в галерее. Не отправляйте как обычное фото: Telegram сжимает снимки, мелкие детали теряются.\n\nЧто снять:\n{s['shots']}\n\nПрисылайте по одному или архивом. Когда закончите — напишите «Готово».")
+        bot.send_message(cid,f"Принято, проверяем: {t}.\n\nПрикрепляйте фото как документ: скрепка 📎 → «Файл» или «Документ» → выберите фото в галерее. Не отправляйте как обычное фото: Telegram сжимает снимки, мелкие детали теряются.\n\nЧто снять:\n{s['shots']}\n\nПрисылайте по одному или несколько одним сообщением. Когда закончите — напишите «Готово».")
     elif s["stage"] in ("photos","retake"):
         if t.lower() in ("готово","done"):
             audit(cid)
@@ -190,17 +216,18 @@ def text(m):
         else:
             bot.send_message(cid,"Записал. Добавляйте фото или напишите «Готово».")
     elif s["stage"]=="tariffs":
-        bot.send_message(cid,"Выберите тариф кнопками ниже. Если кнопки пропали — напишите /start и начните заново.")
+        bot.send_message(cid,"Выберите тариф кнопками ниже. Если кнопки пропали — напишите «Начать заново».")
     elif s["stage"]=="done":
-        bot.send_message(cid,"Отчёт выдан. Для новой проверки напишите /start.")
+        bot.send_message(cid,"Отчёт выдан. Для новой проверки напишите «Начать заново».")
     else:
-        bot.send_message(cid,"Напишите /start, чтобы начать проверку.")
+        bot.send_message(cid,"Напишите «Начать заново», чтобы начать проверку.")
 
 def audit(cid):
     s=st(cid)
     if not s["photos"]:
         bot.send_message(cid,"Фото не получены — проверка не может быть оказана, оплата не запрашивается.")
         return
+    bot.send_message(cid,"🔎 Проверяю фото…")
     try:
         res=ask_qwen(s["photos"],MODE0F.format(name=s["name"] or "?",cannot=", ".join(s["cannot"]) or "нет"),QWEN_CHEAP)
     except Exception:
@@ -214,7 +241,9 @@ def audit(cid):
                 return "нечитаемо" not in t
         return False
     if not (crit("01") and crit("02") and crit("03")):
-        bot.send_message(cid,"По имеющимся фото вердикт вынести невозможно: не хватает критических деталей (упаковка, тара или маркировка). Услуга не оказывается, оплата не запрашивается. Добавьте читаемые фото или начните заново командой /start.")
+        kb=types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("🔄 Начать заново",callback_data="restart"))
+        bot.send_message(cid,"По имеющимся фото вердикт вынести невозможно: не хватает критических деталей (упаковка, тара или маркировка). Услуга не оказывается, оплата не запрашивается. Добавьте читаемые фото или начните заново.",reply_markup=kb)
         return
     missing=clean_missing(parse(res,"MISSING"))
     if missing:
@@ -230,9 +259,29 @@ def audit(cid):
         kb.add(types.InlineKeyboardButton("Экспресс — 1000 ₽ · до 15 минут",callback_data="exp"))
         bot.send_message(cid,f"Фото подходят для проверки.{warn}\n\nВыберите тариф:\n\nОплачивая, вы принимаете условия оферты: {OFERTA}",reply_markup=kb)
 
-@bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report"))
+@bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report","restart","close","fb_up","fb_down"))
 def cb(c):
     cid=c.message.chat.id; s=st(cid)
+    if c.data=="close":
+        bot.answer_callback_query(c.id)
+        try: bot.edit_message_reply_markup(cid,c.message.message_id)
+        except Exception: pass
+        return
+    if c.data=="restart":
+        bot.answer_callback_query(c.id)
+        reset(cid)
+        return
+    if c.data=="fb_up":
+        bot.answer_callback_query(c.id)
+        try: bot.edit_message_reply_markup(cid,c.message.message_id)
+        except Exception: pass
+        bot.send_message(cid,"Спасибо за оценку! 🙏")
+        return
+    if c.data=="fb_down":
+        bot.answer_callback_query(c.id)
+        s["stage"]="feedback"
+        bot.send_message(cid,"Сожалею, что отчёт не помог. Напишите, что было не так — обратная связь будет учтена.")
+        return
     if c.data in ("std","exp"):
         s["tariff"]="Стандартный" if c.data=="std" else "Экспресс"
         kb=types.InlineKeyboardMarkup()
@@ -250,5 +299,9 @@ def cb(c):
         for chunk in [rep[i:i+4000] for i in range(0,len(rep),4000)]:
             bot.send_message(cid,chunk)
         s["stage"]="done"
+        kb=types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("👍 Полезно",callback_data="fb_up"),types.InlineKeyboardButton("👎 Не помогло",callback_data="fb_down"))
+        kb.add(types.InlineKeyboardButton("🔄 Новая проверка",callback_data="restart"),types.InlineKeyboardButton("✅ Готово",callback_data="close"))
+        bot.send_message(cid,"Отчёт готов. Оцените, был ли он полезен.",reply_markup=kb)
 
 bot.infinity_polling(timeout=60)
