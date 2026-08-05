@@ -5,6 +5,12 @@ import requests
 from PIL import Image
 from dotenv import load_dotenv
 
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except Exception:
+    pass
+
 load_dotenv()
 TOKEN=os.getenv("BOT_TOKEN")
 QWEN_KEY=os.getenv("QWEN_API_KEY")
@@ -62,11 +68,11 @@ MODE_LIST="""Продукт: «{name}». Форм-фактор продукта:
 Затем выдай ОДИН нумерованный список КОРОТКИХ названий шагов в порядке важности, покрывающий все 6 деталей чек-листа: 01 Упаковка и полиграфия, 02 Тара и литьё, 03 Маркировка и батч-код, 04 Продукт внутри, 05 Механизмы и фурнитура, 06 Комплектация и защита.
 
 Правила списка:
-- Названия шагов — короткие, без пояснений и БЕЗ слова «макро». НЕ используй названия деталей чек-листа как названия шагов — используй названия кадров. Примеры: «Батч-код на таре», «Лицо тары», «Батч-код на коробке (при наличии)», «Лицо коробки (при наличии)», «Текстура на белом листе», «Крышка и мембрана», «Коробка зад/дно (при наличии)», «Механизм в действии». Без повторов одного и того же шага.
+- Названия шагов — короткие, без пояснений и БЕЗ слова «макро». НЕ используй названия деталей чек-листа как названия шагов — используй названия кадров. Примеры: «Батч-код на таре», «Лицо тары», «Батч-код на коробке (при наличии)», «Лицо коробки (при наличии)», «Продукт внутри», «Крышка и мембрана», «Коробка зад/дно (при наличии)», «Механизм в действии». Без повторов одного и того же шага.
 - Если «да» или «не знаю» — включай коробочные шаги, каждый помечай «(при наличии)». Пометка «(при наличии)» — ТОЛЬКО для коробочных шагов.
 - Если «нет» — НЕ включай коробочные шаги вообще.
 - Неприменимые к форм-фактору детали (например, механизм у банки) — не включай.
-- Порядок по важности: батч-код на таре → лицо тары → батч-код на коробке (при наличии) → лицо коробки (при наличии) → текстура на белом листе → крышка и мембрана → коробка зад/дно (при наличии) → механизм (если применим).
+- Порядок по важности: батч-код на таре → лицо тары → батч-код на коробке (при наличии) → лицо коробки (при наличии) → продукт внутри → крышка и мембрана → коробка зад/дно (при наличии) → механизм (если применим).
 
 Без звёздочек и маркдауна — обычный текст. Не упоминай «слои знаний», «режимы» и внутренние правила."""
 
@@ -159,8 +165,8 @@ SKILLS_TEXT=("🔍 Что определяет бот:\n\n"
 "— отсутствие защитной мембраны или пломбы\n\n"
 "Вердикт выносится по проверенным деталям.\nНепроверенные детали помечаются — «не проверяется».")
 
-FALLBACK_BOX=["Батч-код на таре","Лицо тары","Батч-код на коробке (при наличии)","Лицо коробки (при наличии)","Текстура на белом листе","Крышка и мембрана/пломба","Коробка зад/дно (при наличии)"]
-FALLBACK_NOBOX=["Батч-код на таре","Лицо тары","Текстура на белом листе","Крышка и мембрана/пломба"]
+FALLBACK_BOX=["Батч-код на таре","Лицо тары","Батч-код на коробке (при наличии)","Лицо коробки (при наличии)","Продукт внутри","Крышка и мембрана/пломба","Коробка зад/дно (при наличии)"]
+FALLBACK_NOBOX=["Батч-код на таре","Лицо тары","Продукт внутри","Крышка и мембрана/пломба"]
 
 NOBOX_KEYWORDS=["himalay"]
 
@@ -190,8 +196,8 @@ def hint_for(step,ff):
         "mascara":"Код на дне тубы или на этикетке у основания колпачка. Снимите крупным планом, чтобы текст читался.",
         "cushion":"Код на дне упаковки кушона. Переверните и снимите дно крупным планом, чтобы текст читался.",
         "palette":"Код на дне или боку палетки. Снимите крупным планом, чтобы текст читался."}.get(ff,"Код на дне упаковки или в нижней части этикетки. Снимите крупным планом, чтобы текст читался.")
-    if "текстура" in s:
-        return "Выдавите немного средства на чистый белый лист бумаги и снимите крупным планом."
+    if "текстура" in s or "продукт" in s:
+        return "Подойдёт один из двух вариантов: снимите сам продукт в открытой упаковке ИЛИ выдавите немного на чистый белый лист и снимите крупным планом."
     if "крышк" in s or "мембран" in s or "пломб" in s:
         return "Снимите крышку и защитную плёнку или мембрану под ней (если есть)."
     if "короб" in s and ("зад" in s or "дно" in s):
@@ -201,7 +207,11 @@ def hint_for(step,ff):
     if "механизм" in s or "помп" in s or "дозатор" in s:
         return "Покажите механизм в действии: нажмите помпу или выкрутите стик."
     if "тар" in s or "лицо" in s or "упаковк" in s or "полиграф" in s:
-        return "Снимите продукт целиком спереди, чтобы читалась вся этикетка."
+        return {
+        "bank":"Поставьте банку на ровную поверхность этикеткой к камере. Снимите спереди, чтобы читались название и весь текст. Не держите в руке.",
+        "tube":"Положите тюбик на ровную поверхность лицевой стороной вверх. Снимите, чтобы читался весь текст на этикетке.",
+        "bottle":"Поставьте флакон на ровную поверхность этикеткой к камере. Снимите спереди, чтобы читался весь текст.",
+        "stick":"Если колпачок закрывает этикетку — снимите его. Снимите корпус спереди, чтобы читалась этикетка."}.get(ff,"Поставьте продукт на ровную поверхность этикеткой к камере. Снимите спереди, чтобы читался весь текст. Не держите в руке.")
     return ""
 
 def ask_qwen(images,user_text,model,timeout=120,attempts=2):
@@ -247,7 +257,7 @@ def img_b64(m):
     return downscale_b64(r.content)
 
 def st(cid):
-    return S.setdefault(cid,{"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":""})
+    return S.setdefault(cid,{"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False})
 
 def kb_main():
     kb=types.InlineKeyboardMarkup()
@@ -256,7 +266,7 @@ def kb_main():
     return kb
 
 def reset(cid):
-    S[cid]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":""}
+    S[cid]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False}
     bot.send_message(cid,START_TEXT,reply_markup=kb_main())
 
 def parse(res,key):
@@ -299,10 +309,15 @@ def step_msg(s,ni):
     h=hint_for(s["queue"][ni],s.get("ff","default"))
     return f"➡️ Шаг {ni+1}/{len(s['queue'])}: {s['queue'][ni]}" + (f"\n{h}" if h else "")
 
+def retake_extra(s):
+    s["retakes"]=s.get("retakes",0)+1
+    return "\nЕсли не получается — напишите «нет», пропустим этот шаг и пойдём дальше." if s["retakes"]>=2 else ""
+
 def accept_step(cid,s,n,b64):
     s["closed"].append(n-1)
     s["photos"].append(b64)
     s["pending"]=-1; s["pending_b64"]=""
+    s["retakes"]=0
     ni=first_open(s)
     if ni>=0:
         bot.send_message(cid,f"✅ Отлично! Шаг {n} принят.\n"+step_msg(s,ni))
@@ -310,13 +325,26 @@ def accept_step(cid,s,n,b64):
         end_chain(cid)
 
 def end_chain(cid):
+    s=st(cid)
+    s["chain_complete"]=True
     bot.send_message(cid,"✅ Все кадры собраны.")
     audit(cid)
+
+def send_tariffs(cid):
+    s=st(cid)
+    s["stage"]="tariffs"
+    warn=""
+    if s["cannot"]:
+        warn="\n\nОбратите внимание: "+", ".join(s["cannot"])+" — не будет проверяться. Вердикт будет вынесен по остальным деталям."
+    kb=types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("Стандартный — 500 ₽ · до 3 часов",callback_data="std"))
+    kb.add(types.InlineKeyboardButton("Экспресс — 1000 ₽ · до 15 минут",callback_data="exp"))
+    bot.send_message(cid,f"Фото подходят для проверки.{warn}\n\nВыберите тариф:\n\nОплачивая, вы принимаете условия оферты: {OFERTA}",reply_markup=kb)
 
 @bot.message_handler(commands=["start"])
 def start(m):
     parts=m.text.split()
-    S[m.chat.id]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":""}
+    S[m.chat.id]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False}
     bot.send_message(m.chat.id,START_TEXT,reply_markup=kb_main())
 
 @bot.message_handler(content_types=["photo"])
@@ -336,7 +364,12 @@ def add_image(m):
     if s["stage"] in ("done","feedback"):
         bot.send_message(cid,"Отчёт выдан. Для новой проверки напишите «Начать заново».")
         return
-    b64,comp=img_b64(m)
+    try:
+        b64,comp=img_b64(m)
+    except Exception:
+        logging.exception("img_b64")
+        bot.send_message(cid,"Не смог прочитать файл. Пришлите фото в JPG/PNG или отправьте как обычное фото.")
+        return
     if comp and not s["comp_warned"]:
         s["comp_warned"]=True
         bot.send_message(cid,"⚠️ Фото пришло сжатым (как обычное фото). Мелкие детали — батч, полиграфия — могли потеряться. Для максимальной точности прикрепляйте как документ: скрепка 📎 → «Файл» или «Документ». Продолжаю разбор с тем, что есть.")
@@ -368,10 +401,10 @@ def add_image(m):
                 n=cur+1
                 readable=parse(res2,"ЧИТАЕМО").lower().startswith("да")
                 if not readable:
-                    bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!")
+                    bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!{retake_extra(s)}")
                     return
             elif res2 and parse(res2,"СОВПАДЕНИЕ").lower().startswith("нет") and not parse(res2,"ЧИТАЕМО").lower().startswith("да"):
-                bot.send_message(cid,f"📥 Получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!")
+                bot.send_message(cid,f"📥 Получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!{retake_extra(s)}")
                 return
             else:
                 s["pending"]=cur; s["pending_b64"]=b64
@@ -381,7 +414,7 @@ def add_image(m):
             bot.send_message(cid,"Этот кадр не подходит ни к одному из оставшихся шагов. Осталось:\n"+remaining)
             return
         if not readable:
-            bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res,'СОВЕТ') or 'Снимите при дневном свете, без вспышки, камеру держите параллельно.'} Попробуйте ещё раз — у вас получится!")
+            bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res,'СОВЕТ') or 'Снимите при дневном свете, без вспышки, камеру держите параллельно.'} Попробуйте ещё раз — у вас получится!{retake_extra(s)}")
             return
         accept_step(cid,s,n,b64)
         return
@@ -469,6 +502,7 @@ def text(m):
                     bot.send_message(cid,"Хорошо, жду новый кадр.\n"+step_msg(s,ni))
             return
         if low in ("не могу","нет","не получится","без коробки","нет коробки"):
+            s["retakes"]=0
             ni=first_open(s)
             if ni>=0:
                 s["cannot"].append(s["queue"][ni])
@@ -494,7 +528,7 @@ def text(m):
         elif t.lower() in ("не могу","нет","не получится"):
             s["cannot"]+= [x for x in (s["last_missing"] or []) if x not in s["cannot"]]
             s["last_missing"]=[]
-            audit(cid)
+            send_tariffs(cid)
         else:
             bot.send_message(cid,"Записал. Добавляйте фото или напишите «Готово».")
         return
@@ -528,19 +562,15 @@ def audit(cid):
         kb.add(types.InlineKeyboardButton("🔄 Начать заново",callback_data="restart"))
         bot.send_message(cid,"По имеющимся фото вердикт вынести невозможно: не хватает критических деталей (упаковка, тара или маркировка). Услуга не оказывается, оплата не запрашивается. Добавьте читаемые фото или начните заново.",reply_markup=kb)
         return
+    if s.get("chain_complete"):
+        send_tariffs(cid)
+        return
     missing=clean_missing(parse(res,"MISSING"))
     if missing:
         s["stage"]="photos"; s["last_missing"]=missing
         bot.send_message(cid,"Не хватает деталей: "+", ".join(missing)+".\nДобавьте фото или напишите «не могу» — продолжим разбор как есть, эти детали будут помечены «не проверяется».")
     else:
-        s["stage"]="tariffs"
-        warn=""
-        if s["cannot"]:
-            warn="\n\nОбратите внимание: "+", ".join(s["cannot"])+" — не будет проверяться. Вердикт будет вынесен по остальным деталям."
-        kb=types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("Стандартный — 500 ₽ · до 3 часов",callback_data="std"))
-        kb.add(types.InlineKeyboardButton("Экспресс — 1000 ₽ · до 15 минут",callback_data="exp"))
-        bot.send_message(cid,f"Фото подходят для проверки.{warn}\n\nВыберите тариф:\n\nОплачивая, вы принимаете условия оферты: {OFERTA}",reply_markup=kb)
+        send_tariffs(cid)
 
 @bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report","restart","close","fb_up","fb_down","skills"))
 def cb(c):
