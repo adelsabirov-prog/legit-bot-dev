@@ -71,16 +71,25 @@ MODE_LIST="""Продукт: «{name}». Форм-фактор продукта:
 Без звёздочек и маркдауна — обычный текст. Не упоминай «слои знаний», «режимы» и внутренние правила."""
 
 MODE0C="""РЕЖИМ 0 (цепочка). Продукт: «{name}».
+Текущий шаг: {current}.
 Оставшиеся шаги:
 {remaining}
 На фото косметика или уход? Если явно другой предмет — строго одной строкой:
 ТИП: не косметика
-Иначе определи, какому из оставшихся шагов (по номеру) соответствует фото, и читаемо ли оно.
+Иначе определи, какому шагу соответствует фото. ВНИМАНИЕ: клиент скорее всего снимает текущий шаг — сначала проверь, подходит ли фото под текущий шаг, и только потом ищи среди остальных.
 Ответь СТРОГО в формате:
 ШАГ: [номер из списка; 0, если не подходит ни к одному]
 ЧИТАЕМО: да/нет
 СОВЕТ: [если нечитаемо — одним предложением как переснять]
 Если изображение размыто или текст не различим отчётливо — это «нечитаемо». Не угадывай текст."""
+
+MODE0C2="""РЕЖИМ 0 (контрольный вопрос). Продукт: «{name}».
+Текущий шаг: {step}.
+Фото соответствует этому шагу? Оно читаемо?
+Ответь СТРОГО в формате:
+СОВПАДЕНИЕ: да/нет
+ЧИТАЕМО: да/нет
+СОВЕТ: [если нечитаемо — одним предложением как переснять]"""
 
 MODE0I="""РЕЖИМ 0 (добавочные фото). Продукт: «{name}».
 Сначала определи: на фото косметика или уход? Если явно другой предмет — строго одной строкой:
@@ -150,6 +159,8 @@ SKILLS_TEXT=("🔍 Что определяет бот:\n\n"
 FALLBACK_BOX=["Батч-код на таре","Лицо тары","Батч-код на коробке (при наличии)","Лицо коробки (при наличии)","Текстура на белом листе","Крышка и мембрана/пломба","Коробка зад/дно (при наличии)"]
 FALLBACK_NOBOX=["Батч-код на таре","Лицо тары","Текстура на белом листе","Крышка и мембрана/пломба"]
 
+NOBOX_KEYWORDS=["himalaya"]
+
 def norm_ff(s):
     s=(s or "").lower()
     if "банк" in s: return "bank"
@@ -187,7 +198,7 @@ def hint_for(step,ff):
     if "механизм" in s or "помп" in s or "дозатор" in s:
         return "Покажите механизм в действии: нажмите помпу или выкрутите стик."
     if "тар" in s or "лицо" in s:
-        return f"Снимите продукт целиком спереди, чтобы читалась вся этикетка."
+        return "Снимите продукт целиком спереди, чтобы читалась вся этикетка."
     return ""
 
 def ask_qwen(images,user_text,model):
@@ -297,9 +308,10 @@ def add_image(m):
         bot.send_message(cid,"⚠️ Фото пришло сжатым (как обычное фото). Мелкие детали — батч, полиграфия — могли потеряться. Для максимальной точности прикрепляйте как документ: скрепка 📎 → «Файл» или «Документ». Продолжаю разбор с тем, что есть.")
     if s["stage"]=="chain":
         bot.send_message(cid,"📥 Загружаю фото…")
+        cur=first_open(s)
         remaining="\n".join(f"{i+1}. {s['queue'][i]}" for i in range(len(s["queue"])) if i not in s["closed"])
         try:
-            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",remaining=remaining),QWEN_CHEAP)
+            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",current=f"{cur+1}. {s['queue'][cur]}" if cur>=0 else "нет",remaining=remaining),QWEN_CHEAP)
         except Exception:
             logging.exception("mode0c")
             bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
@@ -309,10 +321,23 @@ def add_image(m):
             return
         num="".join(ch for ch in parse(res,"ШАГ") if ch.isdigit())
         n=int(num) if num else 0
+        readable=parse(res,"ЧИТАЕМО").lower().startswith("да")
+        if n==0 and cur>=0:
+            try:
+                res2=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][cur]),QWEN_CHEAP)
+            except Exception:
+                logging.exception("mode0c2")
+                res2=""
+            if res2 and parse(res2,"СОВПАДЕНИЕ").lower().startswith("да"):
+                n=cur+1
+                readable=parse(res2,"ЧИТАЕМО").lower().startswith("да")
+                if not readable and parse(res2,"СОВЕТ"):
+                    bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res2,'СОВЕТ')} Попробуйте ещё раз — у вас получится!")
+                    return
         if n<1 or n>len(s["queue"]) or (n-1) in s["closed"]:
             bot.send_message(cid,"Этот кадр не подходит ни к одному из оставшихся шагов. Осталось:\n"+remaining)
             return
-        if not parse(res,"ЧИТАЕМО").lower().startswith("да"):
+        if not readable:
             bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res,'СОВЕТ') or 'Снимите при дневном свете, без вспышки, камеру держите параллельно.'} Попробуйте ещё раз — у вас получится!")
             return
         s["closed"].append(n-1)
@@ -370,6 +395,8 @@ def text(m):
         s["ff"]=norm_ff(parse(boxres,"ФОРМ-ФАКТОР"))
         bl=parse(boxres,"КОРОБКА").lower()
         box="нет" if bl.startswith("нет") else ("да" if bl.startswith("да") else "не знаю")
+        if any(k in t.lower() for k in NOBOX_KEYWORDS):
+            box="нет"
         try:
             s["shots"]=ask_qwen([],MODE_LIST.format(name=t,ff=FF_LABEL[s["ff"]],box=box),QWEN_CHEAP)
         except Exception:
