@@ -71,12 +71,12 @@ MODE_LIST="""Продукт: «{name}». Форм-фактор продукта:
 Без звёздочек и маркдауна — обычный текст. Не упоминай «слои знаний», «режимы» и внутренние правила."""
 
 MODE0C="""РЕЖИМ 0 (цепочка). Продукт: «{name}».
-Текущий шаг: {current}.
+Текущий шаг: {current}
 Оставшиеся шаги:
 {remaining}
 На фото косметика или уход? Если явно другой предмет — строго одной строкой:
 ТИП: не косметика
-Иначе определи, какому шагу соответствует фото. ВНИМАНИЕ: клиент скорее всего снимает текущий шаг — сначала проверь, подходит ли фото под текущий шаг, и только потом ищи среди остальных.
+Иначе определи, какому шагу соответствует фото. ВНИМАНИЕ: клиент скорее всего снимает текущий шаг — сначала сравни фото с описанием текущего шага, и только потом ищи среди остальных.
 Ответь СТРОГО в формате:
 ШАГ: [номер из списка; 0, если не подходит ни к одному]
 ЧИТАЕМО: да/нет
@@ -85,7 +85,8 @@ MODE0C="""РЕЖИМ 0 (цепочка). Продукт: «{name}».
 
 MODE0C2="""РЕЖИМ 0 (контрольный вопрос). Продукт: «{name}».
 Текущий шаг: {step}.
-Фото соответствует этому шагу? Оно читаемо?
+Каким должен быть кадр: {hint}
+Сравни фото с этим описанием. Соответствует ли фото описанию? Читаемо ли оно?
 Ответь СТРОГО в формате:
 СОВПАДЕНИЕ: да/нет
 ЧИТАЕМО: да/нет
@@ -197,7 +198,7 @@ def hint_for(step,ff):
         return "Коробка целиком спереди, чтобы были видны все надписи."
     if "механизм" in s or "помп" in s or "дозатор" in s:
         return "Покажите механизм в действии: нажмите помпу или выкрутите стик."
-    if "тар" in s or "лицо" in s:
+    if "тар" in s or "лицо" in s or "упаковк" in s or "полиграф" in s:
         return "Снимите продукт целиком спереди, чтобы читалась вся этикетка."
     return ""
 
@@ -236,7 +237,7 @@ def img_b64(m):
     return downscale_b64(r.content)
 
 def st(cid):
-    return S.setdefault(cid,{"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default"})
+    return S.setdefault(cid,{"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":""})
 
 def kb_main():
     kb=types.InlineKeyboardMarkup()
@@ -245,7 +246,7 @@ def kb_main():
     return kb
 
 def reset(cid):
-    S[cid]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default"}
+    S[cid]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":""}
     bot.send_message(cid,START_TEXT,reply_markup=kb_main())
 
 def parse(res,key):
@@ -275,6 +276,16 @@ def step_msg(s,ni):
     h=hint_for(s["queue"][ni],s.get("ff","default"))
     return f"➡️ Шаг {ni+1}/{len(s['queue'])}: {s['queue'][ni]}" + (f"\n{h}" if h else "")
 
+def accept_step(cid,s,n,b64):
+    s["closed"].append(n-1)
+    s["photos"].append(b64)
+    s["pending"]=-1; s["pending_b64"]=""
+    ni=first_open(s)
+    if ni>=0:
+        bot.send_message(cid,f"✅ Отлично! Шаг {n} принят.\n"+step_msg(s,ni))
+    else:
+        end_chain(cid)
+
 def end_chain(cid):
     bot.send_message(cid,"✅ Все кадры собраны.")
     audit(cid)
@@ -282,7 +293,7 @@ def end_chain(cid):
 @bot.message_handler(commands=["start"])
 def start(m):
     parts=m.text.split()
-    S[m.chat.id]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","comp_warned":False,"ff":"default"}
+    S[m.chat.id]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":""}
     bot.send_message(m.chat.id,START_TEXT,reply_markup=kb_main())
 
 @bot.message_handler(content_types=["photo"])
@@ -307,11 +318,13 @@ def add_image(m):
         s["comp_warned"]=True
         bot.send_message(cid,"⚠️ Фото пришло сжатым (как обычное фото). Мелкие детали — батч, полиграфия — могли потеряться. Для максимальной точности прикрепляйте как документ: скрепка 📎 → «Файл» или «Документ». Продолжаю разбор с тем, что есть.")
     if s["stage"]=="chain":
+        s["pending"]=-1; s["pending_b64"]=""
         bot.send_message(cid,"📥 Загружаю фото…")
         cur=first_open(s)
+        cur_hint=hint_for(s["queue"][cur],s.get("ff","default")) if cur>=0 else ""
         remaining="\n".join(f"{i+1}. {s['queue'][i]}" for i in range(len(s["queue"])) if i not in s["closed"])
         try:
-            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",current=f"{cur+1}. {s['queue'][cur]}" if cur>=0 else "нет",remaining=remaining),QWEN_CHEAP)
+            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",current=f"{cur+1}. {s['queue'][cur]}. Каким должен быть кадр: {cur_hint}" if cur>=0 else "нет",remaining=remaining),QWEN_CHEAP)
         except Exception:
             logging.exception("mode0c")
             bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
@@ -324,29 +337,30 @@ def add_image(m):
         readable=parse(res,"ЧИТАЕМО").lower().startswith("да")
         if n==0 and cur>=0:
             try:
-                res2=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][cur]),QWEN_CHEAP)
+                res2=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][cur],hint=cur_hint),QWEN_CHEAP)
             except Exception:
                 logging.exception("mode0c2")
                 res2=""
             if res2 and parse(res2,"СОВПАДЕНИЕ").lower().startswith("да"):
                 n=cur+1
                 readable=parse(res2,"ЧИТАЕМО").lower().startswith("да")
-                if not readable and parse(res2,"СОВЕТ"):
-                    bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res2,'СОВЕТ')} Попробуйте ещё раз — у вас получится!")
+                if not readable:
+                    bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!")
                     return
+            elif res2 and not parse(res2,"ЧИТАЕМО").lower().startswith("да") and parse(res2,"СОВПАДЕНИЕ").lower().startswith("нет"):
+                bot.send_message(cid,f"📥 Получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!")
+                return
+            else:
+                s["pending"]=cur; s["pending_b64"]=b64
+                bot.send_message(cid,f"📥 Фото получено. Это кадр для шага «{s['queue'][cur]}»? Напишите «да» — приму его, или просто пришлите новый кадр по подсказке:\n{cur_hint}")
+                return
         if n<1 or n>len(s["queue"]) or (n-1) in s["closed"]:
             bot.send_message(cid,"Этот кадр не подходит ни к одному из оставшихся шагов. Осталось:\n"+remaining)
             return
         if not readable:
             bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res,'СОВЕТ') or 'Снимите при дневном свете, без вспышки, камеру держите параллельно.'} Попробуйте ещё раз — у вас получится!")
             return
-        s["closed"].append(n-1)
-        s["photos"].append(b64)
-        ni=first_open(s)
-        if ni>=0:
-            bot.send_message(cid,f"✅ Отлично! Шаг {n} принят.\n"+step_msg(s,ni))
-        else:
-            end_chain(cid)
+        accept_step(cid,s,n,b64)
         return
     bot.send_message(cid,"📥 Загружаю фото…")
     try:
@@ -420,6 +434,16 @@ def text(m):
         return
     if s["stage"]=="chain":
         low=t.lower()
+        if s.get("pending",-1)>=0:
+            if low in ("да","yes","ага","да, это"):
+                ni=s["pending"]; b64=s["pending_b64"]
+                accept_step(cid,s,ni+1,b64)
+            else:
+                s["pending"]=-1; s["pending_b64"]=""
+                ni=first_open(s)
+                if ni>=0:
+                    bot.send_message(cid,"Хорошо, жду новый кадр.\n"+step_msg(s,ni))
+            return
         if low in ("не могу","нет","не получится","без коробки","нет коробки"):
             ni=first_open(s)
             if ni>=0:
