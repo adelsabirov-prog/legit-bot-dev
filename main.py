@@ -68,11 +68,11 @@ MODE_LIST="""Продукт: «{name}». Форм-фактор продукта:
 Затем выдай ОДИН нумерованный список КОРОТКИХ названий шагов в порядке важности, покрывающий все 6 деталей чек-листа: 01 Упаковка и полиграфия, 02 Тара и литьё, 03 Маркировка и батч-код, 04 Продукт внутри, 05 Механизмы и фурнитура, 06 Комплектация и защита.
 
 Правила списка:
-- Названия шагов — короткие, без пояснений и БЕЗ слова «макро». НЕ используй названия деталей чек-листа как названия шагов — используй названия кадров. Примеры: «Батч-код на таре», «Лицо тары», «Батч-код на коробке (при наличии)», «Лицо коробки (при наличии)», «Продукт внутри», «Крышка и мембрана», «Коробка зад/дно (при наличии)», «Механизм в действии». Без повторов одного и того же шага.
+- Названия шагов — короткие, без пояснений и БЕЗ слова «макро». Используй названия кадров, не названия деталей. Примеры: «Батч-код на таре», «Сторона с названием и логотипом», «Батч-код на коробке (при наличии)», «Сторона коробки с названием (при наличии)», «Продукт внутри», «Крышка и мембрана», «Коробка зад/дно (при наличии)», «Механизм в действии». Без повторов.
 - Если «да» или «не знаю» — включай коробочные шаги, каждый помечай «(при наличии)». Пометка «(при наличии)» — ТОЛЬКО для коробочных шагов.
 - Если «нет» — НЕ включай коробочные шаги вообще.
-- Неприменимые к форм-фактору детали (например, механизм у банки) — не включай.
-- Порядок по важности: батч-код на таре → лицо тары → батч-код на коробке (при наличии) → лицо коробки (при наличии) → продукт внутри → крышка и мембрана → коробка зад/дно (при наличии) → механизм (если применим).
+- Неприменимые к форм-фактору детали — не включай.
+- Порядок по важности: батч-код на таре → сторона с названием и логотипом → батч-код на коробке (при наличии) → сторона коробки с названием (при наличии) → продукт внутри → крышка и мембрана → коробка зад/дно (при наличии) → механизм (если применим).
 
 Без звёздочек и маркдауна — обычный текст. Не упоминай «слои знаний», «режимы» и внутренние правила."""
 
@@ -90,7 +90,7 @@ MODE0C="""РЕЖИМ 0 (цепочка). Продукт: «{name}».
 Если изображение размыто или текст не различим отчётливо — это «нечитаемо». Не угадывай текст."""
 
 MODE0C2="""РЕЖИМ 0 (контрольный вопрос). Продукт: «{name}».
-Текущий шаг: {step}.
+Шаг: {step}.
 Каким должен быть кадр: {hint}
 Сравни фото с этим описанием. Соответствует ли фото описанию? Читаемо ли оно?
 Ответь СТРОГО в формате:
@@ -145,6 +145,7 @@ START_TEXT=("👋 Legit Check Cosmetics — проверка признаков 
 
 HELP_TEXT=("Я бот LEGIT·CHECK: разбираю косметику по фото на признаки несоответствия оригиналу — по чек-листу из 6 деталей.\n\n"
 "Стоимость: 500 ₽ (Стандартный, до 3 ч) или 1000 ₽ (Экспресс, до 15 мин).\n\n"
+"Фото присылайте ДОКУМЕНТОМ (скрепка 📎 → «Документ»/«Файл») — так они приходят без сжатия.\n\n"
 "Чтобы начать, напишите название продукта и бренд.\nПример: «Крем Loreal», «Помада Dior».")
 
 SKILLS_TEXT=("🔍 Что определяет бот:\n\n"
@@ -165,10 +166,32 @@ SKILLS_TEXT=("🔍 Что определяет бот:\n\n"
 "— отсутствие защитной мембраны или пломбы\n\n"
 "Вердикт выносится по проверенным деталям.\nНепроверенные детали помечаются — «не проверяется».")
 
-FALLBACK_BOX=["Батч-код на таре","Лицо тары","Батч-код на коробке (при наличии)","Лицо коробки (при наличии)","Продукт внутри","Крышка и мембрана/пломба","Коробка зад/дно (при наличии)"]
-FALLBACK_NOBOX=["Батч-код на таре","Лицо тары","Продукт внутри","Крышка и мембрана/пломба"]
+DOC_HELP=("📎 Как отправить документом (30 секунд):\n"
+"Android: скрепка 📎 → «Документ» → выберите фото в галерее → отправить.\n"
+"iPhone: откройте фото в «Фото» → кнопка «Поделиться» → «Сохранить в Файлы». Затем в Telegram: скрепка 📎 → «Файл» → найдите фото → отправить.\n"
+"Фото придёт без сжатия — я увижу батч и полиграфию.")
+
+BASE_LISTS={
+"bank":["Батч-код на таре","Крышка сверху","Бок банки с надписями","Продукт внутри","Крышка и мембрана"],
+"tube":["Батч-код на таре","Сторона с названием и логотипом","Продукт внутри","Крышка и мембрана"],
+"bottle":["Батч-код на таре","Сторона с названием и логотипом","Продукт внутри","Помпа или дозатор в действии"],
+"stick":["Батч-код на таре","Сторона с названием и логотипом","Продукт внутри","Механизм в действии"],
+"mascara":["Батч-код на таре","Сторона с названием и логотипом","Продукт внутри","Крышка и мембрана"],
+"cushion":["Батч-код на таре","Крышка сверху с названием","Продукт внутри","Крышка и мембрана"],
+"palette":["Батч-код на таре","Крышка сверху с названием","Внутри: оттенки и зеркало","Крышка и мембрана"],
+}
+BOX_STEPS=["Батч-код на коробке (при наличии)","Сторона коробки с названием (при наличии)","Коробка зад/дно (при наличии)"]
 
 NOBOX_KEYWORDS=["himalay"]
+
+def build_list(ff,box):
+    base=BASE_LISTS.get(ff)
+    if not base: return None
+    n01=2 if ff=="bank" else 1
+    out=base[:1+n01]
+    if box!="нет": out+=BOX_STEPS
+    out+=base[1+n01:]
+    return out
 
 def norm_ff(s):
     s=(s or "").lower()
@@ -196,8 +219,19 @@ def hint_for(step,ff):
         "mascara":"Код на дне тубы или на этикетке у основания колпачка. Снимите крупным планом, чтобы текст читался.",
         "cushion":"Код на дне упаковки кушона. Переверните и снимите дно крупным планом, чтобы текст читался.",
         "palette":"Код на дне или боку палетки. Снимите крупным планом, чтобы текст читался."}.get(ff,"Код на дне упаковки или в нижней части этикетки. Снимите крупным планом, чтобы текст читался.")
-    if "текстура" in s or "продукт" in s:
+    if "текстура" in s or "внутри" in s or "белом" in s or "оттенк" in s:
         return "Подойдёт один из двух вариантов: снимите сам продукт в открытой упаковке ИЛИ выдавите немного на чистый белый лист и снимите крупным планом."
+    if "крышк" in s and "сверху" in s:
+        return "Поставьте банку на ровную поверхность и снимите крышку прямо сверху, чтобы читались название и логотип."
+    if "бок" in s or "надпис" in s:
+        return "Поверните банку стороной, где название и логотип, и снимите, чтобы текст читался. Затем поверните стороной с описанием и пришлите второй кадр — приму его как дополнение к этому же шагу."
+    if "короб" in s and ("назван" in s or "логотип" in s or "сторон" in s):
+        return "Снимите коробку спереди, чтобы читались название и все надписи."
+    if "сторона" in s or "лицо" in s or "логотип" in s:
+        return {
+        "tube":"Положите тюбик на ровную поверхность лицевой стороной вверх. Снимите, чтобы читался весь текст.",
+        "bottle":"Поставьте флакон на ровную поверхность этикеткой к камере. Снимите спереди, чтобы читался весь текст.",
+        "stick":"Если колпачок закрывает этикетку — снимите его. Снимите корпус спереди, чтобы читалась этикетка."}.get(ff,"Найдите сторону с названием и логотипом и снимите её прямо, чтобы читался весь текст. Не держите в руке.")
     if "крышк" in s or "мембран" in s or "пломб" in s:
         return "Снимите крышку и защитную плёнку или мембрану под ней (если есть)."
     if "короб" in s and ("зад" in s or "дно" in s):
@@ -206,12 +240,8 @@ def hint_for(step,ff):
         return "Коробка целиком спереди, чтобы были видны все надписи."
     if "механизм" in s or "помп" in s or "дозатор" in s:
         return "Покажите механизм в действии: нажмите помпу или выкрутите стик."
-    if "тар" in s or "лицо" in s or "упаковк" in s or "полиграф" in s:
-        return {
-        "bank":"Поставьте банку на ровную поверхность этикеткой к камере. Снимите спереди, чтобы читались название и весь текст. Не держите в руке.",
-        "tube":"Положите тюбик на ровную поверхность лицевой стороной вверх. Снимите, чтобы читался весь текст на этикетке.",
-        "bottle":"Поставьте флакон на ровную поверхность этикеткой к камере. Снимите спереди, чтобы читался весь текст.",
-        "stick":"Если колпачок закрывает этикетку — снимите его. Снимите корпус спереди, чтобы читалась этикетка."}.get(ff,"Поставьте продукт на ровную поверхность этикеткой к камере. Снимите спереди, чтобы читался весь текст. Не держите в руке.")
+    if "тар" in s or "упаковк" in s or "полиграф" in s:
+        return "Поставьте продукт на ровную поверхность этикеткой к камере. Снимите спереди, чтобы читался весь текст. Не держите в руке."
     return ""
 
 def ask_qwen(images,user_text,model,timeout=120,attempts=2):
@@ -241,23 +271,23 @@ def ask_qwen(images,user_text,model,timeout=120,attempts=2):
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
-def downscale_b64(raw):
+def downscale_b64(raw,limit):
     im=Image.open(io.BytesIO(raw)).convert("RGB")
     w,h=im.size; m=max(w,h)
-    comp=m<1600
-    if m>1600:
-        k=1600/m; im=im.resize((int(w*k),int(h*k)),Image.LANCZOS)
+    if m>limit:
+        k=limit/m; im=im.resize((int(w*k),int(h*k)),Image.LANCZOS)
     buf=io.BytesIO(); im.save(buf,"JPEG",quality=85)
-    return base64.b64encode(buf.getvalue()).decode(), comp
+    return base64.b64encode(buf.getvalue()).decode()
 
 def img_b64(m):
-    fid=m.photo[-1].file_id if m.content_type=="photo" else m.document.file_id
+    is_doc=m.content_type=="document"
+    fid=m.photo[-1].file_id if not is_doc else m.document.file_id
     fp=bot.get_file(fid).file_path
     r=requests.get(f"https://api.telegram.org/file/bot{TOKEN}/{fp}",timeout=60)
-    return downscale_b64(r.content)
+    return downscale_b64(r.content,2048 if is_doc else 1600), (not is_doc)
 
 def st(cid):
-    return S.setdefault(cid,{"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False})
+    return S.setdefault(cid,{"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"doc_fails":0,"comp_ok":False,"comp_pending":"","last_closed":-1})
 
 def kb_main():
     kb=types.InlineKeyboardMarkup()
@@ -266,7 +296,7 @@ def kb_main():
     return kb
 
 def reset(cid):
-    S[cid]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False}
+    S[cid]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":"","tariff":"","ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"doc_fails":0,"comp_ok":False,"comp_pending":"","last_closed":-1}
     bot.send_message(cid,START_TEXT,reply_markup=kb_main())
 
 def parse(res,key):
@@ -315,6 +345,7 @@ def retake_extra(s):
 
 def accept_step(cid,s,n,b64):
     s["closed"].append(n-1)
+    s["last_closed"]=n-1
     s["photos"].append(b64)
     s["pending"]=-1; s["pending_b64"]=""
     s["retakes"]=0
@@ -344,7 +375,7 @@ def send_tariffs(cid):
 @bot.message_handler(commands=["start"])
 def start(m):
     parts=m.text.split()
-    S[m.chat.id]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","comp_warned":False,"ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False}
+    S[m.chat.id]={"name":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"last_missing":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","ff":"default","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"doc_fails":0,"comp_ok":False,"comp_pending":"","last_closed":-1}
     bot.send_message(m.chat.id,START_TEXT,reply_markup=kb_main())
 
 @bot.message_handler(content_types=["photo"])
@@ -370,9 +401,24 @@ def add_image(m):
         logging.exception("img_b64")
         bot.send_message(cid,"Не смог прочитать файл. Пришлите фото в JPG/PNG или отправьте как обычное фото.")
         return
-    if comp and not s["comp_warned"]:
-        s["comp_warned"]=True
-        bot.send_message(cid,"⚠️ Фото пришло сжатым (как обычное фото). Мелкие детали — батч, полиграфия — могли потеряться. Для максимальной точности прикрепляйте как документ: скрепка 📎 → «Файл» или «Документ». Продолжаю разбор с тем, что есть.")
+    if comp and s["stage"] in ("chain","photos") and not s["comp_ok"]:
+        if s["comp_pending"]:
+            s["comp_pending"]=b64
+            bot.send_message(cid,"📥 Это снова обычное фото. Выберите действие на кнопках выше — или пришлите документ.")
+            return
+        if s["doc_fails"]<2:
+            s["doc_fails"]+=1
+            bot.send_message(cid,"📥 Вы прислали обычное фото — Telegram сжимает его, и мелкие детали (батч, полиграфия) могут потеряться. Отправьте, пожалуйста, документом — инструкция ниже.\n\n"+DOC_HELP)
+            return
+        s["comp_pending"]=b64
+        kb=types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("✅ Продолжить с обычными фото",callback_data="comp_ok"))
+        kb.add(types.InlineKeyboardButton("📎 Попробую документом",callback_data="comp_no"))
+        bot.send_message(cid,"⚠️ Обычные фото Telegram сжимает: батч и полиграфия могут стать нечитаемыми. Нечитаемые детали будут помечены «не проверяется», вердикт вынесем по оставшимся — точность разбора будет ниже, чем по документам.",reply_markup=kb)
+        return
+    process_image(cid,s,b64,comp)
+
+def process_image(cid,s,b64,comp):
     if s["stage"]=="chain":
         s["pending"]=-1; s["pending_b64"]=""
         bot.send_message(cid,"📥 Загружаю фото…")
@@ -403,10 +449,24 @@ def add_image(m):
                 if not readable:
                     bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!{retake_extra(s)}")
                     return
-            elif res2 and parse(res2,"СОВПАДЕНИЕ").lower().startswith("нет") and not parse(res2,"ЧИТАЕМО").lower().startswith("да"):
-                bot.send_message(cid,f"📥 Получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!{retake_extra(s)}")
-                return
             else:
+                prev=s.get("last_closed",-1)
+                extra_ok=False
+                if prev>=0 and prev!=cur-1 or (prev>=0 and prev==cur-1):
+                    try:
+                        res3=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][prev],hint=hint_for(s["queue"][prev],s.get("ff","default"))),QWEN_CHEAP,timeout=45,attempts=1) if prev>=0 else ""
+                    except Exception:
+                        logging.exception("mode0c2prev")
+                        res3=""
+                    if res3 and parse(res3,"СОВПАДЕНИЕ").lower().startswith("да") and parse(res3,"ЧИТАЕМО").lower().startswith("да"):
+                        s["photos"].append(b64)
+                        bot.send_message(cid,f"📥 Дополнительный кадр к шагу {prev+1} принят.")
+                        extra_ok=True
+                if extra_ok:
+                    return
+                if res2 and parse(res2,"СОВПАДЕНИЕ").lower().startswith("нет") and not parse(res2,"ЧИТАЕМО").lower().startswith("да"):
+                    bot.send_message(cid,f"📥 Получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!{retake_extra(s)}")
+                    return
                 s["pending"]=cur; s["pending_b64"]=b64
                 bot.send_message(cid,f"📥 Фото получено. Это кадр для шага «{s['queue'][cur]}»? Напишите «да» — приму его, или просто пришлите новый кадр по подсказке:\n{cur_hint}")
                 return
@@ -467,27 +527,32 @@ def text(m):
         box="нет" if bl.startswith("нет") else ("да" if bl.startswith("да") else "не знаю")
         if any(k in t.lower() for k in NOBOX_KEYWORDS):
             box="нет"
-        try:
-            s["shots"]=ask_qwen([],MODE_LIST.format(name=t,ff=FF_LABEL[s["ff"]],box=box),QWEN_CHEAP,timeout=60,attempts=1)
-        except Exception:
-            logging.exception("mode_list")
-            s["shots"]="\n".join(f"{i+1}. {q}" for i,q in enumerate(FALLBACK_NOBOX if box=="нет" else FALLBACK_BOX))
-        if box=="нет":
-            lines=[l for l in s["shots"].splitlines() if "короб" not in l.lower()]
-            out=[]; n=0
-            for l in lines:
-                m=re.match(r"^\s*(\d+)[\.\)]\s*(.+)$",l.strip())
-                if m:
-                    n+=1; out.append(f"{n}. {m.group(2).strip()}")
-                else:
-                    out.append(l)
-            s["shots"]="\n".join(out)
-        s["shots"]="\n".join(l if "короб" in l.lower() else l.replace("(при наличии)","").strip() for l in s["shots"].splitlines())
-        s["shots"],steps=dedup_shots(s["shots"])
-        s["queue"]=steps or (FALLBACK_NOBOX[:] if box=="нет" else FALLBACK_BOX[:])
+        qlist=build_list(s["ff"],box)
+        if qlist is not None:
+            s["queue"]=qlist
+            s["shots"]="Что снять:\nДля разбора продукта «"+t+"» необходимы следующие снимки:\n\n"+"\n".join(f"{i+1}. {q}" for i,q in enumerate(s["queue"]))
+        else:
+            try:
+                s["shots"]=ask_qwen([],MODE_LIST.format(name=t,ff=FF_LABEL[s["ff"]],box=box),QWEN_CHEAP,timeout=60,attempts=1)
+            except Exception:
+                logging.exception("mode_list")
+                s["shots"]="\n".join(f"{i+1}. {q}" for i,q in enumerate(build_list("tube",box) or []))
+            if box=="нет":
+                lines=[l for l in s["shots"].splitlines() if "короб" not in l.lower()]
+                out=[]; n=0
+                for l in lines:
+                    mm=re.match(r"^\s*(\d+)[\.\)]\s*(.+)$",l.strip())
+                    if mm:
+                        n+=1; out.append(f"{n}. {mm.group(2).strip()}")
+                    else:
+                        out.append(l)
+                s["shots"]="\n".join(out)
+            s["shots"]="\n".join(l if "короб" in l.lower() else l.replace("(при наличии)","").strip() for l in s["shots"].splitlines())
+            s["shots"],steps=dedup_shots(s["shots"])
+            s["queue"]=steps or build_list("tube",box)
         s["closed"]=[]
         s["stage"]="chain"
-        bot.send_message(cid,f"Принято: {t}.\n\n{s['shots']}\n\nСобираем кадры по шагам — буду подсказывать каждый и скажу, если нужно переснять. Лучше прикреплять как документ (скрепка 📎 → «Документ»): Telegram сжимает обычные фото, и мелкие детали теряются. Шаги с «(при наличии)» пропускайте, если коробки или детали нет — просто напишите «нет». Если в названии опечатка — напишите «Начать заново» и введите название заново.\n\n"+step_msg(s,0))
+        bot.send_message(cid,f"Принято: {t}.\n\n{s['shots']}\n\nСобираем кадры по шагам — буду подсказывать каждый и скажу, если нужно переснять. Фото присылайте ДОКУМЕНТОМ — так они приходят без сжатия.\n{DOC_HELP}\nШаги с «(при наличии)» пропускайте, если коробки или детали нет — просто напишите «нет». Если в названии опечатка — напишите «Начать заново» и введите название заново.\n\n"+step_msg(s,0))
         return
     if s["stage"]=="chain":
         low=t.lower()
@@ -507,6 +572,7 @@ def text(m):
             if ni>=0:
                 s["cannot"].append(s["queue"][ni])
                 s["closed"].append(ni)
+                s["last_closed"]=ni
             n2=first_open(s)
             if n2>=0:
                 bot.send_message(cid,"⚠️ Пропускаю шаг.\n"+step_msg(s,n2))
@@ -572,12 +638,28 @@ def audit(cid):
     else:
         send_tariffs(cid)
 
-@bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report","restart","close","fb_up","fb_down","skills"))
+@bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report","restart","close","fb_up","fb_down","skills","comp_ok","comp_no"))
 def cb(c):
     cid=c.message.chat.id; s=st(cid)
     if c.data=="skills":
         bot.answer_callback_query(c.id)
         bot.send_message(cid,SKILLS_TEXT)
+        return
+    if c.data=="comp_ok":
+        bot.answer_callback_query(c.id)
+        try: bot.edit_message_reply_markup(cid,c.message.message_id)
+        except Exception: pass
+        s["comp_ok"]=True
+        b64=s["comp_pending"]; s["comp_pending"]=""
+        if b64:
+            process_image(cid,s,b64,True)
+        return
+    if c.data=="comp_no":
+        bot.answer_callback_query(c.id)
+        try: bot.edit_message_reply_markup(cid,c.message.message_id)
+        except Exception: pass
+        s["comp_pending"]=""
+        bot.send_message(cid,"Инструкция выше, жду документ 📎\n"+DOC_HELP)
         return
     if c.data=="close":
         bot.answer_callback_query(c.id)
