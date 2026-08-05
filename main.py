@@ -14,7 +14,7 @@ BASE=os.getenv("DASHSCOPE_BASE_URL","https://openrouter.ai/api/v1")
 OFERTA="https://legitcheck-cosmetics.netlify.app/oferta.html"
 PRIVACY=OFERTA+"#privacy"
 
-bot=telebot.TeleBot(TOKEN)
+bot=telebot.TeleBot(TOKEN,threaded=True)
 S={}
 
 SYSTEM="""Ты — экспертная система разбора LEGIT·CHECK (косметика и уход). Анализируешь фото продукта по чек-листу и даёшь структурированные ответы на русском.
@@ -48,7 +48,7 @@ SYSTEM="""Ты — экспертная система разбора LEGIT·CHE
 
 СПИСОК «НЕ ПРОВЕРЯЕТСЯ»: детали из этого списка помечай «➖ не проверяется», выводов по ним не делай; вердикт выноси только по проверенным и укажи это в плашке."""
 
-MODE_BOX="""Продукт: «{name}».
+MODE_BOX="""Продукт: «{name}». Если название похоже на опечатку — попробуй понять, что имелось в виду.
 Ответь СТРОГО двумя строками:
 ФОРМ-ФАКТОР: [одно из: банка, тюбик, флакон с помпой, стик помады, кушон, тушь, палетка, другое]
 КОРОБКА: да/нет/не знаю (продаётся ли этот продукт обычно в картонной коробке)"""
@@ -202,19 +202,27 @@ def hint_for(step,ff):
         return "Снимите продукт целиком спереди, чтобы читалась вся этикетка."
     return ""
 
-def ask_qwen(images,user_text,model):
+def ask_qwen(images,user_text,model,timeout=120,attempts=2):
     content=[{"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b}"}} for b in images]
     content.append({"type":"text","text":user_text})
     r=None
-    for attempt in range(3):
-        r=requests.post(BASE+"/chat/completions",
-            headers={"Authorization":"Bearer "+QWEN_KEY,"Content-Type":"application/json"},
-            json={"model":model,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]},
-            timeout=180)
+    for attempt in range(attempts):
+        try:
+            r=requests.post(BASE+"/chat/completions",
+                headers={"Authorization":"Bearer "+QWEN_KEY,"Content-Type":"application/json"},
+                json={"model":model,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]},
+                timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            logging.error("QWEN NET %s",e)
+            if attempt<attempts-1:
+                time.sleep(2)
+                continue
+            raise
         if r.status_code in (429,500,502,503):
             logging.error("QWEN RETRY %s %s",r.status_code,r.text[:500])
-            time.sleep(4*(attempt+1))
-            continue
+            if attempt<attempts-1:
+                time.sleep(3)
+                continue
         break
     if r.status_code!=200:
         logging.error("QWEN ERROR %s %s",r.status_code,r.text[:1500])
@@ -324,7 +332,7 @@ def add_image(m):
         cur_hint=hint_for(s["queue"][cur],s.get("ff","default")) if cur>=0 else ""
         remaining="\n".join(f"{i+1}. {s['queue'][i]}" for i in range(len(s["queue"])) if i not in s["closed"])
         try:
-            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",current=f"{cur+1}. {s['queue'][cur]}. Каким должен быть кадр: {cur_hint}" if cur>=0 else "нет",remaining=remaining),QWEN_CHEAP)
+            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",current=f"{cur+1}. {s['queue'][cur]}. Каким должен быть кадр: {cur_hint}" if cur>=0 else "нет",remaining=remaining),QWEN_CHEAP,timeout=60,attempts=1)
         except Exception:
             logging.exception("mode0c")
             bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
@@ -337,7 +345,7 @@ def add_image(m):
         readable=parse(res,"ЧИТАЕМО").lower().startswith("да")
         if n==0 and cur>=0:
             try:
-                res2=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][cur],hint=cur_hint),QWEN_CHEAP)
+                res2=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][cur],hint=cur_hint),QWEN_CHEAP,timeout=45,attempts=1)
             except Exception:
                 logging.exception("mode0c2")
                 res2=""
@@ -347,7 +355,7 @@ def add_image(m):
                 if not readable:
                     bot.send_message(cid,f"📥 Шаг {n}: получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!")
                     return
-            elif res2 and not parse(res2,"ЧИТАЕМО").lower().startswith("да") and parse(res2,"СОВПАДЕНИЕ").lower().startswith("нет"):
+            elif res2 and parse(res2,"СОВПАДЕНИЕ").lower().startswith("нет") and not parse(res2,"ЧИТАЕМО").lower().startswith("да"):
                 bot.send_message(cid,f"📥 Получено, но пока нечитаемо. {parse(res2,'СОВЕТ') or 'Снимите при дневном свете, без вспышки.'} Попробуйте ещё раз — у вас получится!")
                 return
             else:
@@ -364,7 +372,7 @@ def add_image(m):
         return
     bot.send_message(cid,"📥 Загружаю фото…")
     try:
-        res=ask_qwen([b64],MODE0I.format(name=s["name"] or "?"),QWEN_CHEAP)
+        res=ask_qwen([b64],MODE0I.format(name=s["name"] or "?"),QWEN_CHEAP,timeout=60,attempts=1)
     except Exception:
         logging.exception("mode0i")
         bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
@@ -402,7 +410,7 @@ def text(m):
         s["name"]=t
         bot.send_message(cid,"📋 Составляю список кадров под продукт…")
         try:
-            boxres=ask_qwen([],MODE_BOX.format(name=t),QWEN_CHEAP)
+            boxres=ask_qwen([],MODE_BOX.format(name=t),QWEN_CHEAP,timeout=45,attempts=1)
         except Exception:
             logging.exception("mode_box")
             boxres="ФОРМ-ФАКТОР: другое\nКОРОБКА: не знаю"
@@ -412,7 +420,7 @@ def text(m):
         if any(k in t.lower() for k in NOBOX_KEYWORDS):
             box="нет"
         try:
-            s["shots"]=ask_qwen([],MODE_LIST.format(name=t,ff=FF_LABEL[s["ff"]],box=box),QWEN_CHEAP)
+            s["shots"]=ask_qwen([],MODE_LIST.format(name=t,ff=FF_LABEL[s["ff"]],box=box),QWEN_CHEAP,timeout=60,attempts=1)
         except Exception:
             logging.exception("mode_list")
             s["shots"]="\n".join(f"{i+1}. {q}" for i,q in enumerate(FALLBACK_NOBOX if box=="нет" else FALLBACK_BOX))
@@ -430,7 +438,7 @@ def text(m):
         s["queue"]=parse_steps(s["shots"]) or (FALLBACK_NOBOX[:] if box=="нет" else FALLBACK_BOX[:])
         s["closed"]=[]
         s["stage"]="chain"
-        bot.send_message(cid,f"Принято: {t}.\n\n{s['shots']}\n\nСобираем кадры по шагам — буду подсказывать каждый и скажу, если нужно переснять. Лучше прикреплять как документ (скрепка 📎 → «Документ»): Telegram сжимает обычные фото, и мелкие детали теряются. Шаги с «(при наличии)» пропускайте, если коробки или детали нет — просто напишите «нет».\n\n"+step_msg(s,0))
+        bot.send_message(cid,f"Принято: {t}.\n\n{s['shots']}\n\nСобираем кадры по шагам — буду подсказывать каждый и скажу, если нужно переснять. Лучше прикреплять как документ (скрепка 📎 → «Документ»): Telegram сжимает обычные фото, и мелкие детали теряются. Шаги с «(при наличии)» пропускайте, если коробки или детали нет — просто напишите «нет». Если в названии опечатка — напишите «Начать заново» и введите название заново.\n\n"+step_msg(s,0))
         return
     if s["stage"]=="chain":
         low=t.lower()
@@ -488,7 +496,7 @@ def audit(cid):
         return
     bot.send_message(cid,"🔎 Проверяю фото…")
     try:
-        res=ask_qwen(s["photos"],MODE0F.format(name=s["name"] or "?",cannot=", ".join(s["cannot"]) or "нет"),QWEN_CHEAP)
+        res=ask_qwen(s["photos"],MODE0F.format(name=s["name"] or "?",cannot=", ".join(s["cannot"]) or "нет"),QWEN_CHEAP,timeout=90,attempts=2)
     except Exception:
         logging.exception("mode0f")
         bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
@@ -502,7 +510,7 @@ def audit(cid):
     if not (crit("01") and crit("02") and crit("03")):
         kb=types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("🔄 Начать заново",callback_data="restart"))
-        bot.send_message(cid,"По имеющимся фото вердикт вынести невозможно: не хватает критических деталей (упаковка, тара или маркировка). Услуга не оказывается, оплата не запрашивается. Добавьте читаемые фото или начните заново.",reply_markup=kb)
+        bot.send_message(cid,"По имеющим фото вердикт вынести невозможно: не хватает критических деталей (упаковка, тара или маркировка). Услуга не оказывается, оплата не запрашивается. Добавьте читаемые фото или начните заново.",reply_markup=kb)
         return
     missing=clean_missing(parse(res,"MISSING"))
     if missing:
@@ -554,7 +562,7 @@ def cb(c):
         bot.send_message(cid,"🧾 Собираю отчёт…")
         note="\nНЕ ПРОВЕРЯЕТСЯ: "+", ".join(s["cannot"]) if s["cannot"] else ""
         try:
-            rep=ask_qwen(s["photos"],MODE2.format(name=s["name"] or "?")+note,QWEN_MODEL)
+            rep=ask_qwen(s["photos"],MODE2.format(name=s["name"] or "?")+note,QWEN_MODEL,timeout=150,attempts=2)
         except Exception:
             logging.exception("mode2")
             bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
