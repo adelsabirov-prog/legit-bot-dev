@@ -171,6 +171,8 @@ DOC_HELP=("📎 Как отправить документом (30 секунд)
 "iPhone: откройте фото в «Фото» → кнопка «Поделиться» → «Сохранить в Файлы». Затем в Telegram: скрепка 📎 → «Файл» → найдите фото → отправить.\n"
 "Фото придёт без сжатия — я увижу батч и полиграфию.")
 
+BUSY_TEXT="⚠️ Сервис временно перегружен. Подождите минуту и пришлите фото ещё раз — всё сохранится."
+
 BASE_LISTS={
 "bank":["Батч-код на таре","Крышка сверху","Бок банки с надписями","Продукт внутри","Крышка и мембрана"],
 "tube":["Батч-код на таре","Сторона с названием и логотипом","Продукт внутри","Крышка и мембрана"],
@@ -220,7 +222,14 @@ def hint_for(step,ff):
         "cushion":"Код на дне упаковки кушона. Переверните и снимите дно крупным планом, чтобы текст читался.",
         "palette":"Код на дне или боку палетки. Снимите крупным планом, чтобы текст читался."}.get(ff,"Код на дне упаковки или в нижней части этикетки. Снимите крупным планом, чтобы текст читался.")
     if "текстура" in s or "внутри" in s or "белом" in s or "оттенк" in s:
-        return "Подойдёт один из двух вариантов: снимите сам продукт в открытой упаковке ИЛИ выдавите немного на чистый белый лист и снимите крупным планом."
+        return {
+        "bank":"Откройте банку и снимите продукт внутри крупным планом, чтобы были видны текстура и цвет.",
+        "cushion":"Откройте кушон и снимите продукт внутри крупным планом, чтобы была видна текстура.",
+        "palette":"Откройте палетку и снимите оттенки крупным планом.",
+        "tube":"Выдавите немного средства и снимите крупным планом. По возможности — на чистый белый лист; если нет, подойдёт любая чистая светлая поверхность или сам носик тюбика.",
+        "bottle":"Нажмите дозатор и снимите выдавленное средство крупным планом. По возможности — на чистый белый лист; если нет — любая чистая светлая поверхность.",
+        "stick":"Выкрутите стик и снимите продукт крупным планом. По возможности — на чистый белый лист.",
+        "mascara":"Покажите аппликатор с продуктом и снимите крупным планом. По возможности — на чистый белый лист."}.get(ff,"Снимите продукт в открытой упаковке крупным планом. По возможности — выдавите немного на чистый белый лист и снимите.")
     if "крышк" in s and "сверху" in s:
         return "Поставьте банку на ровную поверхность и снимите крышку прямо сверху, чтобы читались название и логотип."
     if "бок" in s or "надпис" in s:
@@ -257,13 +266,13 @@ def ask_qwen(images,user_text,model,timeout=120,attempts=2):
         except requests.exceptions.RequestException as e:
             logging.error("QWEN NET %s",e)
             if attempt<attempts-1:
-                time.sleep(2)
+                time.sleep(3)
                 continue
             raise
         if r.status_code in (429,500,502,503):
             logging.error("QWEN RETRY %s %s",r.status_code,r.text[:500])
             if attempt<attempts-1:
-                time.sleep(3)
+                time.sleep(4)
                 continue
         break
     if r.status_code!=200:
@@ -426,10 +435,10 @@ def process_image(cid,s,b64,comp):
         cur_hint=hint_for(s["queue"][cur],s.get("ff","default")) if cur>=0 else ""
         remaining="\n".join(f"{i+1}. {s['queue'][i]}" for i in range(len(s["queue"])) if i not in s["closed"])
         try:
-            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",current=f"{cur+1}. {s['queue'][cur]}. Каким должен быть кадр: {cur_hint}" if cur>=0 else "нет",remaining=remaining),QWEN_CHEAP,timeout=60,attempts=1)
+            res=ask_qwen([b64],MODE0C.format(name=s["name"] or "?",current=f"{cur+1}. {s['queue'][cur]}. Каким должен быть кадр: {cur_hint}" if cur>=0 else "нет",remaining=remaining),QWEN_CHEAP,timeout=60,attempts=2)
         except Exception:
             logging.exception("mode0c")
-            bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
+            bot.send_message(cid,BUSY_TEXT)
             return
         if "не косметика" in res.lower():
             bot.send_message(cid,"📥 Получено, но это не косметика или уход — я проверяю только их. Пришлите фото нужного продукта или напишите «Начать заново».")
@@ -452,9 +461,9 @@ def process_image(cid,s,b64,comp):
             else:
                 prev=s.get("last_closed",-1)
                 extra_ok=False
-                if prev>=0 and prev!=cur-1 or (prev>=0 and prev==cur-1):
+                if prev>=0:
                     try:
-                        res3=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][prev],hint=hint_for(s["queue"][prev],s.get("ff","default"))),QWEN_CHEAP,timeout=45,attempts=1) if prev>=0 else ""
+                        res3=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][prev],hint=hint_for(s["queue"][prev],s.get("ff","default"))),QWEN_CHEAP,timeout=45,attempts=1)
                     except Exception:
                         logging.exception("mode0c2prev")
                         res3=""
@@ -480,10 +489,10 @@ def process_image(cid,s,b64,comp):
         return
     bot.send_message(cid,"📥 Загружаю фото…")
     try:
-        res=ask_qwen([b64],MODE0I.format(name=s["name"] or "?"),QWEN_CHEAP,timeout=60,attempts=1)
+        res=ask_qwen([b64],MODE0I.format(name=s["name"] or "?"),QWEN_CHEAP,timeout=60,attempts=2)
     except Exception:
         logging.exception("mode0i")
-        bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
+        bot.send_message(cid,BUSY_TEXT)
         return
     if "не косметика" in res.lower():
         bot.send_message(cid,"📥 Получено, но это не косметика или уход — я проверяю только их. Пришлите фото нужного продукта или напишите «Начать заново».")
@@ -615,7 +624,7 @@ def audit(cid):
         res=ask_qwen(s["photos"],MODE0F.format(name=s["name"] or "?",cannot=", ".join(s["cannot"]) or "нет"),QWEN_CHEAP,timeout=90,attempts=2)
     except Exception:
         logging.exception("mode0f")
-        bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
+        bot.send_message(cid,"⚠️ Сервис временно перегружен. Попробуйте ещё раз через минуту.")
         return
     def crit(n):
         for line in res.splitlines():
@@ -693,7 +702,7 @@ def cb(c):
             rep=ask_qwen(s["photos"],MODE2.format(name=s["name"] or "?")+note,QWEN_MODEL,timeout=150,attempts=2)
         except Exception:
             logging.exception("mode2")
-            bot.send_message(cid,"Техническая ошибка. Попробуйте ещё раз.")
+            bot.send_message(cid,"⚠️ Сервис временно перегружен. Попробуйте ещё раз через минуту.")
             return
         rep=rep.replace("— не проверяется","➖ не проверяется").replace("- не проверяется","➖ не проверяется")
         for chunk in [rep[i:i+4000] for i in range(0,len(rep),4000)]:
