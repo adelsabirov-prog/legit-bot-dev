@@ -568,8 +568,10 @@ def send_crops(cid,s):
 def text(m):
     cid=m.chat.id
     t=m.text.strip()
-    if t.lower() in ("начать заново",):
-        reset(cid); return
+    if t.lower() in ("начать заново","/start"):
+        if cid in S: del S[cid]
+        bot.send_message(cid,START_TEXT,reply_markup=kb_main())
+        return
     s=st(cid)
     if t.lower()=="навыки бота":
         bot.send_message(cid,SKILLS_TEXT); return
