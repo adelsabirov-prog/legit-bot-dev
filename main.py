@@ -248,12 +248,13 @@ def norm_ff(x):
     return "флакон с распылителем"
 
 START_TEXT=("👋 Legit Check Perfume — разбор парфюмерии по фото на признаки несоответствия оригиналу.\n\n"
-"Как работаем:\n"
-"1. Напишите название аромата.\n"
-"2. Пришлите фото продукта.\n"
-"3. Бот соберёт чек-лист кадров и поможет сделать читаемые снимки.\n"
-"4. Получаете структурированный отчёт с итогом по деталям.\n\n"
-"Чтобы начать — напишите название.")
+"Как это работает:\n"
+"1. Напишите название аромата — составим список необходимых кадров под ваш флакон.\n"
+"2. По шагам соберём фотографии — принимаем ТОЛЬКО документом (без сжатия), чтобы разбор был точным.\n"
+"3. После подтверждения пригодности фото — оплата: 500 ₽ (Стандартный, до 3 ч) или 1000 ₽ (Экспресс, до 15 минут).\n"
+"4. Получаете структурированный отчёт с общим итогом по деталям.\n\n"
+"Напишите название аромата.\n"
+"Пример: «Creed Aventus», «Chanel №5»")
 
 HELP_TEXT=("Я — бот LEGIT·CHECK, разбираю парфюмерию по фото на признаки несоответствия оригиналу. Напишите название аромата — начнём разбор. "
 "Если кнопки пропали — напишите «Начать заново».")
@@ -275,8 +276,9 @@ DOC_HELP=("1. Откройте фото в галерее.\n"
 "4. Выберите «Файл» и отправьте фото как файл.")
 
 def kb_main():
-    kb=types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row(types.KeyboardButton("Навыки бота"))
+    kb=types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🔍 Что умеет бот",callback_data="skills"))
+    kb.add(types.InlineKeyboardButton("📄 Оферта",url=OFERTA),types.InlineKeyboardButton("🔒 Политика конфиденциальности",url=PRIVACY))
     return kb
 
 def img_b64(m):
@@ -651,6 +653,11 @@ def cb(c):
     cid=c.message.chat.id
     s=st(cid)
     d=c.data
+    if d=="skills":
+        try: bot.answer_callback_query(c.id)
+        except Exception: pass
+        bot.send_message(cid,SKILLS_TEXT)
+        return
     if d.startswith("box_"):
         box={"box_yes":"да","box_no":"нет","box_dk":"не знаю"}[d]
         try: bot.answer_callback_query(c.id)
