@@ -428,7 +428,7 @@ def dedup_shots(shots):
     head=[]; steps=[]; seen=set()
     for l in shots.splitlines():
         m=re.match(r"^\s*(\d+)[\.\)]\s*(.+)$",l.strip())
-    if m:
+        if m:
             name=m.group(2).strip()
             key=name.lower()
             if key not in seen:
