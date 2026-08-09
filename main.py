@@ -711,7 +711,7 @@ def first_open(s):
 
 def step_msg(s,ni):
     h=hint_for(s["queue"][ni],s.get("ff","default"),s.get("obj") or "both")
-    return f"➡️ Шаг {ni+1}/{len(s['queue'])}: {s['queue'][ni]}" + (f"\n{h}" if h else "") + "\nЕсли не получается — скажите, подскажу, как снять лучше. Если совсем не получается — напишите «нет», и эта деталь не будет разбираться."
+    return f"➡️ Шаг {ni+1}/{len(s['queue'])}: {s['queue'][ni]}" + (f"\n{h}" if h else "")
 
 def retake_extra(s):
     s["retakes"]=s.get("retakes",0)+1
