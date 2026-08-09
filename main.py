@@ -1114,5 +1114,179 @@ def text(m):
         corrected=parse(boxres,"НАЗВАНИЕ") or t
         if corrected.lower()!=t.lower():
             s["name"]=corrected
-            bot.send_message(cid,f"
-...
+            bot.send_message(cid,f"Принято: {corrected} (исправлено из «{t}»). Если неверно — напишите «Начать заново».")
+        else:
+            bot.send_message(cid,f"Принято: {t}.")
+        s["ff"]=norm_ff(parse(boxres,"ФОРМ-ФАКТОР"))
+        s["stage"]="box"
+        bot.send_message(cid,"Что проверяем?",reply_markup=kb_obj())
+        return
+    if s["stage"]=="box":
+        bot.send_message(cid,"Нажмите кнопку: «Флакон без коробки» или «Флакон с коробкой».")
+        return
+    if s["stage"]=="chain":
+        low=t.lower()
+        if s.get("pending",-1)>=0:
+            if low in ("да","yes","ага","да, это"):
+                ni=s["pending"]; b64=s["pending_b64"]
+                accept_step(cid,s,ni+1,b64)
+            else:
+                s["pending"]=-1; s["pending_b64"]=""
+                ni=first_open(s)
+                if ni>=0:
+                    bot.send_message(cid,"Хорошо, жду новый кадр.\n"+step_msg(s,ni))
+            return
+        if low in ("не получается","не вижу","не могу найти","плохо видно","не могу снять"):
+            ni=first_open(s)
+            if ni>=0:
+                obj=s.get("obj") or "both"
+                bot.send_message(cid,"Подсказываю ещё раз по текущему шагу.\n"+hint_for(s["queue"][ni],s.get("ff","default"),obj)+"\nЕсли совсем не получается — напишите «нет», и эта деталь не будет разбираться.")
+            return
+        if low in ("не могу","нет","без коробки","нет коробки"):
+            s["retakes"]=0
+            ni=first_open(s)
+            if ni>=0 and "крышк" in s["queue"][ni].lower() and s.get("cap_stage",0)==1:
+                s["cap_stage"]=0
+                s["closed"].append(ni)
+                s["last_closed"]=ni
+                n2=first_open(s)
+                if n2>=0:
+                    bot.send_message(cid,"Хорошо, внутреннюю часть пропускаю, идём дальше.\n"+step_msg(s,n2))
+                else:
+                    end_chain(cid)
+                return
+            if ni>=0:
+                s["cannot"].append(s["queue"][ni])
+                s["closed"].append(ni)
+                s["last_closed"]=ni
+            n2=first_open(s)
+            if n2>=0:
+                bot.send_message(cid,"Хорошо, пропускаю шаг, идём дальше.\n"+step_msg(s,n2))
+            else:
+                end_chain(cid)
+            return
+        if low in ("готово","done"):
+            ni=first_open(s)
+            if ni>=0:
+                bot.send_message(cid,"Осталось собрать кадры:\n"+"\n".join(f"{i+1}. {s['queue'][i]}" for i in range(len(s['queue'])) if i not in s["closed"])+"\nПришлите фото или напишите «нет», если шага нет в вашем продукте.")
+            else:
+                end_chain(cid)
+            return
+        bot.send_message(cid,"Сейчас собираем кадры по шагам. Пришлите фото текущего шага (документом) или напишите «нет», если шага нет в вашем продукте.")
+        return
+    if s["stage"]=="tariffs":
+        bot.send_message(cid,"Выберите тариф кнопками ниже. Если кнопки пропали — напишите «Начать заново».")
+    elif s["stage"]=="done":
+        bot.send_message(cid,"Отчёт выдан. Хотите перепроверить пункт — пришлите фото этого места документом. Для новой проверки напишите «Начать заново».")
+    else:
+        bot.send_message(cid,"Напишите «Начать заново», чтобы начать проверку.")
+
+@bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report","restart","close","fb_up","fb_down","skills","obj_bottle","obj_both","model_switch"))
+def cb(c):
+    cid=c.message.chat.id; s=st(cid)
+    if c.data=="skills":
+        bot.answer_callback_query(c.id)
+        bot.send_message(cid,SKILLS_TEXT)
+        return
+    if c.data=="model_switch":
+        bot.answer_callback_query(c.id)
+        current=s.get("model") or QWEN_MODEL
+        if current==QWEN_MODEL:
+            s["model"]=QWEN3_MODEL
+            new="Qwen3-VL-235B"
+        else:
+            s["model"]=QWEN_MODEL
+            new="Qwen2.5-VL-72B"
+        try: bot.edit_message_reply_markup(cid,c.message.message_id)
+        except Exception: pass
+        bot.send_message(cid,f"Переключено на {new}. Новый отчёт будет на этой модели.")
+        return
+    if c.data in ("obj_bottle","obj_both"):
+        bot.answer_callback_query(c.id)
+        try: bot.edit_message_reply_markup(cid,c.message.message_id)
+        except Exception: pass
+        start_chain(cid,"bottle" if c.data=="obj_bottle" else "both")
+        return
+    if c.data=="close":
+        bot.answer_callback_query(c.id)
+        try: bot.edit_message_reply_markup(cid,c.message.message_id)
+        except Exception: pass
+        return
+    if c.data=="restart":
+        bot.answer_callback_query(c.id)
+        reset(cid)
+        return
+    if c.data=="fb_up":
+        bot.answer_callback_query(c.id)
+        try: bot.edit_message_reply_markup(cid,c.message.message_id)
+        except Exception: pass
+        update_case_meta(s,feedback="up")
+        bot.send_message(cid,"Спасибо за оценку! 🙏")
+        return
+    if c.data=="fb_down":
+        bot.answer_callback_query(c.id)
+        s["stage"]="feedback"
+        bot.send_message(cid,"Сожалею, что отчёт не помог. Напишите, что было не так — обратная связь будет учтена.")
+        return
+    if c.data in ("std","exp"):
+        s["tariff"]="Стандартный" if c.data=="std" else "Экспресс"
+        logging.info("FUNNEL tariff cid=%s tariff=%s",cid,s["tariff"])
+        kb=types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("📄 Получить отчёт",callback_data="report"))
+        bot.send_message(cid,f"Тариф: {s['tariff']}. (Тестовый режим: оплата отключена.) Жмите кнопку — соберу отчёт.",reply_markup=kb)
+    elif c.data=="report":
+        bot.send_message(cid,"🧾 Собираю отчёт…")
+        note="\nНЕ ПРОВЕРЯЕТСЯ: "+", ".join(s["cannot"]) if s["cannot"] else ""
+        tariff_note="\nТАРИФ ЭКСПРЕСС: дай максимально подробные обоснования: 2-3 предложения на деталь, процитируй все видимые признаки." if s["tariff"]=="Экспресс" else "\nТАРИФ СТАНДАРТ: обоснования 1-2 предложения на деталь."
+        model=s.get("model") or QWEN_MODEL
+        try:
+            rep=ask_qwen(s["photos"],MODE2.format(name=s["name"] or "?")+note+tariff_note,model,timeout=240,attempts=2)
+        except Exception:
+            logging.exception("mode2")
+            bot.send_message(cid,"⚠️ Сервис временно перегружен. Попробуйте ещё раз через минуту.")
+            return
+        rep=re.sub(r"[➖\-−–—―]\s*не проверяется","➖ не проверяется",rep)
+        rep=re.sub(r"(0[1-5])\s*[—–\-−―]\s*",r"\1 ➖ ",rep)
+        rep=re.sub(r"[—–\-−―]\s*(0[1-5])",r"➖ \1",rep)
+        rep=re.sub(r"[Пп]одделк\w*","несоответствие",rep)
+        details=parse_details(rep)
+        rep,details=itemmap_demote(cid,rep,details)
+        rep,details=self_consistency(cid,s,rep,details,model,note,tariff_note)
+        rep,details=verify_reds(cid,s,rep,details,model)
+        rep=verify_batch_claim(cid,s,rep,model)
+        s["details"]=details
+        checked=[n for n in ("01","02","03","04","05") if details.get(n) in ("✅","⚠️","❌")]
+        unchecked=[n for n in ("01","02","03","04","05") if n not in checked]
+        head=build_head(details)
+        note_line="Проверены: "+(", ".join(checked) if checked else "нет")+"; не проверялись: "+(", ".join(unchecked) if unchecked else "нет")+"."
+        m=re.search(r"(?m)^(0[1-5])\b",rep)
+        body=rep[m.start():] if m else rep
+        rep=head+"\n"+note_line+"\n\n"+body
+        if s.get("obj")=="bottle":
+            marker="Аромат и состав"
+            if marker in rep:
+                rep=rep.replace(marker,BOTTLE_ONLY_NOTE+"\n"+marker,1)
+            else:
+                rep+="\n"+BOTTLE_ONLY_NOTE
+        s["report_text"]=rep
+        s["rechecks"]=0
+        save_case(cid,s)
+        logging.info("INTERNAL_VERDICT cid=%s model=%s verdict=%s",cid,model,verdict_str(s["details"]))
+        if s["tariff"]=="Экспресс":
+            send_express_report(cid,s,rep,details)
+            send_crops(cid,s)
+            pb=build_pdf(s,rep,s.get("crops",[]))
+            if pb:
+                bio=io.BytesIO(pb)
+                bio.name="LegitCheck_report.pdf"
+                bot.send_document(cid,bio,caption="Отчёт по разбору (PDF).")
+        else:
+            for chunk in chunk_report(rep):
+                bot.send_message(cid,chunk)
+        s["stage"]="done"
+        kb=types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("👍 Полезно",callback_data="fb_up"),types.InlineKeyboardButton("👎 Не помогло",callback_data="fb_down"))
+        kb.add(types.InlineKeyboardButton("🔄 Новая проверка",callback_data="restart"),types.InlineKeyboardButton("✅ Готово",callback_data="close"))
+        bot.send_message(cid,"Отчёт готов. Оцените, был ли он полезен.",reply_markup=kb)
+
+bot.infinity_polling(timeout=60)
