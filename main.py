@@ -1,4 +1,4 @@
-import os, base64, logging, io, time, re, threading, json
+import os, base64, logging, io, time, re, threading, json, html
 from datetime import datetime
 import telebot
 from telebot import types
@@ -306,6 +306,63 @@ TAIL_MARKERS=("Аромат и состав","Результат —","Отчё�
 def status_color(st):
     return {"✅":(22,140,40),"⚠️":(230,160,0),"❌":(200,30,30),"➖":(140,140,140)}.get(st,(140,140,140))
 
+def esc(t):
+    return html.escape(t,quote=False)
+
+def split_report_parts(rep):
+    m=re.search(r"(?m)^(0[1-5])\b",rep)
+    head=rep[:m.start()].rstrip() if m else rep
+    body_tail=rep[m.start():] if m else ""
+    t=None
+    for marker in TAIL_MARKERS:
+        mm=re.search(r"(?m)^"+re.escape(marker),body_tail)
+        if mm and (t is None or mm.start()<t):
+            t=mm.start()
+    if t is not None:
+        body=body_tail[:t].rstrip()
+        tail=body_tail[t:]
+    else:
+        body=body_tail
+        tail=""
+    return head,body,tail
+
+def format_detail_block(block):
+    lines=block.split("\n")
+    m=re.match(r"^(0[1-5])\s*(✅|⚠️|❌|➖)\s*([^:：\n]+)[:：]\s*(.*)$",lines[0])
+    if not m:
+        return esc(block)
+    n,st,name,rest=m.groups()
+    rest_lines=([rest] if rest.strip() else [])+lines[1:]
+    text="\n".join(l for l in rest_lines if l.strip())
+    return f"<b>{n} · {esc(name.strip())} {st}</b>\n"+esc(text)
+
+def send_express_report(cid,s,rep,details):
+    head,body,tail=split_report_parts(rep)
+    v=verdict_str(details)
+    reds=[n for n in ("01","02","03","04","05") if details.get(n)=="❌"]
+    warns=[n for n in ("01","02","03","04","05") if details.get(n)=="⚠️"]
+    parts=[]
+    if reds: parts.append("❌ по деталям "+", ".join(reds))
+    if warns: parts.append("⚠️ по деталям "+", ".join(warns))
+    base=("Основание: "+"; ".join(parts)+".") if parts else "Основание: подтверждённых маркеров по проверенным деталям нет."
+    checked=[n for n in ("01","02","03","04","05") if details.get(n) in ("✅","⚠️","")]
+    unchecked=[n for n in ("01","02","03","04","05") if n not in checked]
+    head_html=esc(v)
+    if s.get("name"):
+        head_html+="\n\nПродукт: "+esc(s["name"])
+    head_html+="\n"+esc(base)
+    head_html+="\n"+esc("Проверены: "+(" · ".join(checked) if checked else "нет")+"; не проверялись: "+(" · ".join(unchecked) if unchecked else "нет")+".")
+    send_html(cid,head_html)
+    blocks=[b for b in re.split(r"(?m)^(?=0[1-5]\b)",body) if b.strip()]
+    body_html="\n\n".join(format_detail_block(b) for b in blocks)
+    if body_html and len(body_html)<=4096:
+        send_html(cid,body_html)
+    elif body:
+        for chunk in chunk_report(body):
+            bot.send_message(cid,chunk)
+    if tail.strip():
+        send_html(cid,"<i>"+esc(tail.strip()).replace("\n\n","\n")+"</i>")
+
 def build_pdf(s,rep,crops):
     if not FONT_PATH:
         logging.warning("PDF: шрифт не найден, PDF пропущен")
@@ -431,7 +488,7 @@ def hint_for(step,ff,obj="both"):
     return ""
 
 def unread_advice(s,n,advice):
-    step=s["queue"][n-1].lower() if 0<n-1<len(s["queue"]) else (s["queue"][n-1].lower() if n-1==0 and s["queue"] else "")
+    step=s["queue"][n-1].lower() if 0<=n-1<len(s["queue"]) else ""
     if "батч" in step and "короб" in step:
         return "На этой стороне кода не видно. Осмотрите боковые грани и нижнюю клапань коробки — код обычно там. Пришлите их крупным планом."
     if "батч" in step and s.get("retakes",0)>=1:
@@ -777,7 +834,7 @@ def verify_reds(cid,s,rep,details,model):
     return rep,details
 
 def verify_batch_claim(cid,s,rep,model):
-    if "совпадает с кодом на коробке" not in rep and "код на коробке" not in rep:
+    if "совпадает с кодом на коробке" not in rep:
         return rep
     other=QWEN3_MODEL if model==QWEN_MODEL else QWEN_MODEL
     try:
@@ -1057,61 +1114,5 @@ def text(m):
         corrected=parse(boxres,"НАЗВАНИЕ") or t
         if corrected.lower()!=t.lower():
             s["name"]=corrected
-            bot.send_message(cid,f"Принято: {corrected} (исправлено из «{t}»). Если неверно — напишите «Начать заново».")
-        else:
-            bot.send_message(cid,f"Принято: {t}.")
-        s["ff"]=norm_ff(parse(boxres,"ФОРМ-ФАКТОР"))
-        s["stage"]="box"
-        bot.send_message(cid,"Что проверяем?",reply_markup=kb_obj())
-        return
-    if s["stage"]=="box":
-        bot.send_message(cid,"Нажмите кнопку: «Флакон без коробки» или «Флакон с коробкой».")
-        return
-    if s["stage"]=="chain":
-        low=t.lower()
-        if s.get("pending",-1)>=0:
-            if low in ("да","yes","ага","да, это"):
-                ni=s["pending"]; b64=s["pending_b64"]
-                accept_step(cid,s,ni+1,b64)
-            else:
-                s["pending"]=-1; s["pending_b64"]=""
-                ni=first_open(s)
-                if ni>=0:
-                    bot.send_message(cid,"Хорошо, жду новый кадр.\n"+step_msg(s,ni))
-            return
-        if low in ("не получается","не вижу","не могу найти","плохо видно","не могу снять"):
-            ni=first_open(s)
-            if ni>=0:
-                obj=s.get("obj") or "both"
-                bot.send_message(cid,"Подсказываю ещё раз по текущему шагу.\n"+hint_for(s["queue"][ni],s.get("ff","default"),obj)+"\nЕсли совсем не получается — напишите «нет», и эта деталь не будет разбираться.")
-            return
-        if low in ("не могу","нет","без коробки","нет коробки"):
-            s["retakes"]=0
-            ni=first_open(s)
-            if ni>=0 and "крышк" in s["queue"][ni].lower() and s.get("cap_stage",0)==1:
-                s["cap_stage"]=0
-                s["closed"].append(ni)
-                s["last_closed"]=ni
-                n2=first_open(s)
-                if n2>=0:
-                    bot.send_message(cid,"Хорошо, внутреннюю часть пропускаю, идём дальше.\n"+step_msg(s,n2))
-                else:
-                    end_chain(cid)
-                return
-            if ni>=0:
-                s["cannot"].append(s["queue"][ni])
-                s["closed"].append(ni)
-                s["last_closed"]=ni
-            n2=first_open(s)
-            if n2>=0:
-                bot.send_message(cid,"Хорошо, пропускаю шаг, идём дальше.\n"+step_msg(s,n2))
-            else:
-                end_chain(cid)
-            return
-        if low in ("готово","done"):
-            ni=first_open(s)
-            if ni>=0:
-                bot.
+            bot.send_message(cid,f"
 ...
-
-[Показана часть сообщения]  Показать полностью
