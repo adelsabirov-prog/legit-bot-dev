@@ -1,5 +1,5 @@
 import os, base64, logging, io, time, re, threading, json, html, uuid
-from datetime import datetime
+from datetime import datetime,timezone,timedelta
 import telebot
 from telebot import types
 import requests
@@ -27,6 +27,10 @@ CASES_DIR=os.getenv("CASES_DIR","cases")
 YK_SHOP=os.getenv("YOOKASSA_SHOP_ID","")
 YK_KEY=os.getenv("YOOKASSA_SECRET_KEY","")
 PAY_FILE=os.path.join(CASES_DIR,"_pending_pays.json")
+JOBS_FILE=os.path.join(CASES_DIR,"_jobs.json")
+DELAY_STD=3600
+DELAY_EXP=300
+MSK=timezone(timedelta(hours=3))
 
 FONT_PATH=next((p for p in ("arial.ttf","Arial.ttf","DejaVuSans.ttf",
 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -77,7 +81,7 @@ TIER A (ур.2, всегда активен):
 - Контровый свет, блики, отражения и световые ореолы на стекле, дымка при съёмке против света — НЕ дефекты полиграфии и стекла. ❌ по п.5/п.6 ТОЛЬКО если дефект виден независимо от бликов и описан точно: где (край, дно, зона этикетки) и что (пузырь, скол, плывущая буква).
 - Батч, нечитаемый на фото (тусклая гравировка, блики), — НЕ ❌-маркер: если шаг пропущен или фото нечитаемо, деталь 03 помечается «➖ не проверяется». Нечитаемость батча НЕ интерпретируй как вмешательство в код.
 - ❌-маркер — ТОЛЬКО с конкретным основанием: процитируй, что именно читается/видится на фото, и объясни, чему это должно быть у оригинала. Расплывчатые формулировки («видны несоответствия», «такие как…») БЕЗ конкретики — НЕ маркеры. В ❌-обосновании укажи номер пункта списка (Tier A/B).
-- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ⚠️/❌.
+- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ️/❌.
 - ✅ по сверке батчей требует цитат ОБЕИХ кодов; без кода на коробке — «сверка с коробкой не проводилась», а не «совпадает».
 - Точные цифры (штрихкод, адрес, REF) в отчёте НЕ цитируй — только наличие блоков надписей. Точные цитаты разрешены ТОЛЬКО для батч-кодов.
 - ✅ НЕ содержит оговорок со словом «однако» и перечислений дефектов; честная приписка о том, какая часть детали не оценивалась (например, без кадра против света), разрешена ТОЛЬКО отдельным предложением без «однако».
@@ -181,7 +185,7 @@ TIER A (ур.2, всегда активен):
 Пример Г: код на флаконе читается, а кода на коробке в кадре нет → по 03 пиши: код на флаконе читается (цитата); сверка с коробкой не проводилась. НЕ пиши «совпадает».
 Пример Д: крышка лежит отдельно от флакона → по 05 оценивай форму, материал, гравировку; про посадку НЕ пиши.
 
-Всё вне списка (целлофан, цвет жидкости, уровень наполнения, «магнит крышки», отсутствие вкладышей, потёртости) — НЕ ❌, максимум ⚠️ с конкретикой. Не выдумывай «обязательные элементы» бренда вне списка. 🔴 — только при 2+ ❌ из списка; ровно 1 ❌ — ⚠️. Деталь не видна или не применима (трубочка у роликового флакона) — «➖ не проверяется», никогда ✅. Форматы батчей по рынкам различаются — сами по себе НЕ маркеры. Нет кадра против света — маркер по трубочке не применяется.
+Всё вне списка (целлофан, цвет жидкости, уровень наполнения, «магнит крышки», отсутствие вкладышей, потёртости) — НЕ ❌, максимум ️ с конкретикой. Не выдумывай «обязательные элементы» бренда вне списка. 🔴 — только при 2+ ❌ из списка; ровно 1 ❌ — ⚠️. Деталь не видна или не применима (трубочка у роликового флакона) — «➖ не проверяется», никогда ✅. Форматы батчей по рынкам различаются — сами по себе НЕ маркеры. Нет кадра против света — маркер по трубочке не применяется.
 - Батч нечитаем из-за бликов или тусклой гравировки — «➖ не проверяется»; НЕ интерпретируй нечитаемость как вмешательство в код.
 - Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ️/❌.
 - ✅ НЕ содержит оговорок со словом «однако»; честная приписка, какая часть детали не оценивалась, разрешена отдельным предложением без «однако».
@@ -204,7 +208,7 @@ MODE_VERIFY="""КОНТРОЛЬНАЯ ПРОВЕРКА (адверсариаль
 Ответь СТРОГО в формате:
 ПРОБЫ: [по каждой пробе: да/нет/не вижу — через ;]
 ВЕРДИКТ: ПОДТВЕРЖДАЮ или ОПРОВЕРГАЮ
-СТАТУС: ❌/️/➖
+СТАТУС: ❌/⚠️/➖
 ПОЧЕМУ: одно предложение."""
 
 MODE_VERIFY_BATCH="""КОНТРОЛЬНАЯ ПРОВЕРКА СВЕРКИ. Продукт: «{name}».
@@ -375,6 +379,54 @@ def remove_pending(cid):
     with open(PAY_FILE,"w",encoding="utf-8") as f:
         json.dump(p,f)
 
+def sess_path(cid):
+    return os.path.join(CASES_DIR,f"{cid}_sess.json")
+
+def save_session(cid,s):
+    try:
+        snap={"name":s.get("name",""),"photos":s.get("photos",[]),
+        "obj":s.get("obj",""),"ff":s.get("ff","default"),
+        "cannot":s.get("cannot",[]),"tariff":s.get("tariff",""),
+        "model":s.get("model") or QWEN_MODEL}
+        with open(sess_path(cid),"w",encoding="utf-8") as f:
+            json.dump(snap,f)
+    except Exception:
+        logging.exception("session save")
+
+def load_session(cid):
+    try:
+        with open(sess_path(cid),encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def load_jobs():
+    try:
+        with open(JOBS_FILE,encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_jobs(j):
+    with open(JOBS_FILE,"w",encoding="utf-8") as f:
+        json.dump(j,f)
+
+def add_job(cid,delay):
+    j=load_jobs()
+    j[str(cid)]={"run_at":int(time.time())+delay}
+    save_jobs(j)
+
+def run_job(cid):
+    s=S.get(cid) or st(cid)
+    if not s.get("photos"):
+        snap=load_session(cid)
+        if snap and snap.get("photos"):
+            s.update(snap)
+    if not s.get("photos"):
+        bot.send_message(cid,"⚠️ Фотосессию не удалось восстановить. Напишите «Начать заново» — оплата сохранена и будет зачтена в новую проверку.")
+        return
+    do_report(cid)
+
 def split_report_parts(rep):
     m=re.search(r"(?m)^(0[1-5])\b",rep)
     head=rep[:m.start()].rstrip() if m else rep
@@ -440,7 +492,7 @@ def build_pdf(s,rep,crops):
         pdf.cell(0,9,"LEGIT·CHECK — отчёт по разбору",new_x=2,new_y=1)
         pdf.set_font("base","",9)
         pdf.set_text_color(120,120,120)
-        pdf.cell(0,5,"Дата: "+datetime.now().strftime("%d.%m.%Y")+"   Продукт: "+(s.get("name") or "—")+"   Тариф: "+(s.get("tariff") or "—"),new_x=2,new_y=1)
+        pdf.cell(0,5,"Дата: "+datetime.now(MSK).strftime("%d.%m.%Y")+"   Продукт: "+(s.get("name") or "—")+"   Тариф: "+(s.get("tariff") or "—"),new_x=2,new_y=1)
         pdf.ln(4)
         segs=re.split(r"(?m)^(0[1-5])\s*",rep)
         head=re.sub(r"^[🔴️🟢\s]+","",segs[0]).strip()
@@ -665,7 +717,7 @@ def update_case_meta(s,**kw):
 
 def notify_owner(cid,s,rep):
     try:
-        summ="📋 КЕЙС · "+datetime.now().strftime("%d.%m.%Y %H:%M")
+        summ="📋 КЕЙС · "+datetime.now(MSK).strftime("%d.%m.%Y %H:%M")
         summ+="\ncid: "+str(cid)+" · Тариф: "+(s.get("tariff") or "—")
         summ+="\nПродукт: "+(s.get("name") or "—")
         summ+="\nВердикт: "+verdict_str(s["details"])
@@ -799,7 +851,7 @@ def kb_obj():
 def kb_report(s,with_fb=True):
     kb=types.InlineKeyboardMarkup()
     for n in ("01","02","03","04","05"):
-        if s["details"].get(n) in ("⚠️","❌","➖"):
+        if s["details"].get(n) in ("⚠️","","➖"):
             kb.add(types.InlineKeyboardButton(f"🔁 Перепроверить {n} · {PDF_NAMES[n]}",callback_data="rc_"+n))
     if with_fb:
         kb.add(types.InlineKeyboardButton("👍 Полезно",callback_data="fb_up"),types.InlineKeyboardButton("👎 Не помогло",callback_data="fb_down"))
@@ -1005,7 +1057,7 @@ def verify_batch_ocr(cid,s,rep,model):
         logging.info("OCR_CROSS cid=%s match",cid)
         return rep
     logging.info("OCR_CROSS cid=%s mismatch c1=%s c2=%s rep=%s",cid,c1,c2,code1)
-    rep=re.sub(r"((?:код на флаконе|батч)[^\n]{0,20}(?:читается как|:))\s*[A-Za-z0-9]{4,12}",r"\1 код читается, точная цитата не приводится",rep,flags=re.I)
+    rep=re.sub(r"((?:код на флаконе|батч)[^\n]{0,20}?)читается как\s*[A-Za-z0-9]{4,12}",r"\1 читается, точная цитата не приводится",rep,flags=re.I)
     return rep
 
 def send_crops(cid,s):
@@ -1070,6 +1122,13 @@ def do_recheck(cid,s,n,b64):
 
 def do_report(cid):
     s=st(cid)
+    if not s.get("photos"):
+        snap=load_session(cid)
+        if snap and snap.get("photos"):
+            s.update(snap)
+    if not s.get("photos"):
+        bot.send_message(cid,"⚠️ В сессии нет фотографий. Напишите «Начать заново» — оплата сохранена и будет зачтена в новую проверку.")
+        return
     bot.send_message(cid,"🧾 Собираю отчёт…")
     note="\nНЕ ПРОВЕРЯЕТСЯ: "+", ".join(s["cannot"]) if s["cannot"] else ""
     if s["tariff"]=="Экспресс":
@@ -1108,7 +1167,7 @@ def do_report(cid):
             rep=rep.replace(marker,BOTTLE_ONLY_NOTE+"\n"+marker,1)
         else:
             rep+="\n"+BOTTLE_ONLY_NOTE
-    if any(v in ("⚠️","","➖") for v in details.values()):
+    if any(v in ("⚠️","❌","➖") for v in details.values()):
         lim="Доступны две перепроверки." if s["tariff"]=="Экспресс" else "Доступна одна перепроверка."
         rep+="\nЕсли с каким-то пунктом не согласны — переснимите эту деталь крупным планом документом и пришлите в этот чат вместе с номером пункта (01–05). "+lim
     s["report_text"]=rep
@@ -1131,13 +1190,19 @@ def do_report(cid):
     bot.send_message(cid,"Отчёт готов. Оцените, был ли он полезен.",reply_markup=kb_report(s,with_fb=True))
 
 def on_paid(cid,s):
-    if s.get("paid"):
-        return
-    s["paid"]=True
+    with chat_lock(cid):
+        if s.get("paid"):
+            return
+        s["paid"]=True
     remove_pending(cid)
     logging.info("PAY_SUCCEEDED cid=%s",cid)
-    bot.send_message(cid,"✅ Оплата получена. Собираю отчёт…")
-    do_report(cid)
+    if s.get("tariff")=="Экспресс":
+        delay=DELAY_EXP; sla="в течение 15 минут."
+    else:
+        delay=DELAY_STD; sla="в течение 3 часов."
+    save_session(cid,s)
+    add_job(cid,delay)
+    bot.send_message(cid,"✅ Оплата получена. Отчёт в очереди: придёт "+sla)
 
 def payment_watcher():
     while True:
@@ -1151,13 +1216,24 @@ def payment_watcher():
                     continue
                 if stt=="succeeded":
                     cid=int(cid_s)
-                    s=S.get(cid)
-                    if s and not s.get("paid"):
+                    s=S.get(cid) or st(cid)
+                    if not s.get("paid"):
                         on_paid(cid,s)
                     else:
                         remove_pending(cid)
         except Exception:
-            logging.exception("payment watcher")
+            logging.exception("payment watcher pays")
+        try:
+            jobs=load_jobs()
+            now=int(time.time())
+            due=[c for c,jb in jobs.items() if now>=jb.get("run_at",0)]
+            for cid_s in due:
+                jobs.pop(cid_s,None)
+                save_jobs(jobs)
+                logging.info("JOB_RUN cid=%s",cid_s)
+                run_job(int(cid_s))
+        except Exception:
+            logging.exception("payment watcher jobs")
 
 @bot.message_handler(commands=["start"])
 def start(m):
@@ -1545,11 +1621,12 @@ def cb(c):
             return
         s["pay_id"]=pid; s["pay_url"]=purl; s["stage"]="pay"
         save_pending(cid,pid)
+        save_session(cid,s)
         logging.info("PAY_CREATED cid=%s pid=%s amount=%d",cid,pid,amount)
         kb=types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton(f"💳 Оплатить {amount} ₽",url=purl))
         kb.add(types.InlineKeyboardButton("✅ Я оплатил(а)",callback_data="paycheck"))
-        bot.send_message(cid,"Откроется страница оплаты (СБП или карта). После оплаты отчёт соберётся автоматически в течение ~30 секунд. Если этого не произошло — нажмите «Я оплатил(а)».",reply_markup=kb)
+        bot.send_message(cid,"Откроется страница оплаты (СБП или карта). После оплаты отчёт встанет в очередь и придёт в срок тарифа. Если этого не произошло — нажмите «Я оплатил(а)».",reply_markup=kb)
         return
     elif c.data=="report":
         if not (s.get("paid") or is_owner(cid)):
