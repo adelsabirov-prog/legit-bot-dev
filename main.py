@@ -1531,13 +1531,6 @@ def cb(c):
         s["tariff"]="Стандартный" if c.data=="std" else "Экспресс"
         amount=500 if c.data=="std" else 1000
         logging.info("FUNNEL tariff cid=%s tariff=%s",cid,s["tariff"])
-        if is_owner(cid):
-            logging.info("OWNER_TEST tariff cid=%s",cid)
-            s["paid"]=True
-            kb=types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("📄 Получить отчёт",callback_data="report"))
-            bot.send_message(cid,f"Тариф: {s['tariff']}. (Режим владельца: без оплаты.) Жмите кнопку — соберу отчёт.",reply_markup=kb)
-            return
         try:
             pid,purl=yk_create(cid,amount,"Legit Check Perfume — тариф "+s["tariff"])
         except Exception:
