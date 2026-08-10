@@ -340,7 +340,8 @@ def esc(t):
 
 def yk_create(cid,amount,label):
     body={"amount":{"value":f"{amount}.00","currency":"RUB"},"capture":True,
-    "confirmation":{"type":"redirect"},"description":label,
+    "confirmation":{"type":"redirect","return_url":"https://legitcheck-perfume.vercel.app/"},
+    "description":label,
     "metadata":{"cid":str(cid)}}
     r=requests.post("https://api.yookassa.ru/v3/payments",auth=(YK_SHOP,YK_KEY),json=body,timeout=30,
         headers={"Idempotence-Key":str(uuid.uuid4())})
