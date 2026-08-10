@@ -1,4 +1,4 @@
-import os, base64, logging, io, time, re, threading, json, html, uuid
+import os, base64, logging, io, time, re, threading, json, html, uuid, glob
 from datetime import datetime,timezone,timedelta
 import telebot
 from telebot import types
@@ -36,6 +36,9 @@ FONT_PATH=next((p for p in ("arial.ttf","Arial.ttf","DejaVuSans.ttf",
 "/app/arial.ttf",
 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 "/usr/share/fonts/dejavu/DejaVuSans.ttf") if os.path.exists(p)),None)
+if not FONT_PATH:
+    FONT_PATH=next(iter(glob.glob("/app/**/*.ttf",recursive=True)),None)
+logging.info("FONT_PATH=%s",FONT_PATH)
 
 bot=telebot.TeleBot(TOKEN,threaded=True)
 S={}
@@ -186,7 +189,7 @@ TIER A (ур.2, всегда активен):
 Пример Г: код на флаконе читается, а кода на коробке в кадре нет → по 03 пиши: код на флаконе читается (цитата); сверка с коробкой не проводилась. НЕ пиши «совпадает».
 Пример Д: крышка лежит отдельно от флакона → по 05 оценивай форму, материал, гравировку; про посадку НЕ пиши.
 
-Всё вне списка (целлофан, цвет жидкости, уровень наполнения, «магнит крышки», отсутствие вкладышей, потёртости) — НЕ ❌, максимум ️ с конкретикой. Не выдумывай «обязательные элементы» бренда вне списка. 🔴 — только при 2+ ❌ из списка; ровно 1 ❌ — ⚠️. Деталь не видна или не применима (трубочка у роликового флакона) — «➖ не проверяется», никогда ✅. Форматы батчей по рынкам различаются — сами по себе НЕ маркеры. Нет кадра против света — маркер по трубочке не применяется.
+Всё вне списка (целлофан, цвет жидкости, уровень наполнения, «магнит крышки», отсутствие вкладышей, потёртости) — НЕ ❌, максимум ⚠️ с конкретикой. Не выдумывай «обязательные элементы» бренда вне списка. 🔴 — только при 2+ ❌ из списка; ровно 1 ❌ — ⚠️. Деталь не видна или не применима (трубочка у роликового флакона) — «➖ не проверяется», никогда ✅. Форматы батчей по рынкам различаются — сами по себе НЕ маркеры. Нет кадра против света — маркер по трубочке не применяется.
 - Батч нечитаем из-за бликов или тусклой гравировки — «➖ не проверяется»; НЕ интерпретируй нечитаемость как вмешательство в код.
 - Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ️/❌.
 - ✅ НЕ содержит оговорок со словом «однако»; честная приписка, какая часть детали не оценивалась, разрешена отдельным предложением без «однако».
@@ -209,7 +212,7 @@ MODE_VERIFY="""КОНТРОЛЬНАЯ ПРОВЕРКА (адверсариаль
 Ответь СТРОГО в формате:
 ПРОБЫ: [по каждой пробе: да/нет/не вижу — через ;]
 ВЕРДИКТ: ПОДТВЕРЖДАЮ или ОПРОВЕРГАЮ
-СТАТУС: ❌/⚠️/➖
+СТАТУС: ❌/️/➖
 ПОЧЕМУ: одно предложение."""
 
 MODE_VERIFY_BATCH="""КОНТРОЛЬНАЯ ПРОВЕРКА СВЕРКИ. Продукт: «{name}».
@@ -480,6 +483,7 @@ def build_pdf(s,rep,crops):
         return None
     try:
         from fpdf import FPDF
+        from fpdf.enums import XPos, YPos
     except Exception:
         logging.exception("pdf: нет fpdf2")
         return None
@@ -490,10 +494,10 @@ def build_pdf(s,rep,crops):
         pdf.add_font("base","",FONT_PATH)
         pdf.set_font("base","",15)
         pdf.set_text_color(25,25,25)
-        pdf.cell(0,9,"LEGIT·CHECK — отчёт по разбору",new_x=2,new_y=1)
+        pdf.cell(0,9,"LEGIT·CHECK — отчёт по разбору",new_x=XPos.LMARGIN,new_y=YPos.NEXT)
         pdf.set_font("base","",9)
         pdf.set_text_color(120,120,120)
-        pdf.cell(0,5,"Дата: "+datetime.now(MSK).strftime("%d.%m.%Y")+"   Продукт: "+(s.get("name") or "—")+"   Тариф: "+(s.get("tariff") or "—"),new_x=2,new_y=1)
+        pdf.cell(0,5,"Дата: "+datetime.now(MSK).strftime("%d.%m.%Y")+"   Продукт: "+(s.get("name") or "—")+"   Тариф: "+(s.get("tariff") or "—"),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
         pdf.ln(4)
         segs=re.split(r"(?m)^(0[1-5])\s*",rep)
         head=re.sub(r"^[🔴️🟢\s]+","",segs[0]).strip()
@@ -523,18 +527,18 @@ def build_pdf(s,rep,crops):
             pdf.ellipse(2,y+1,4,4,"F")
             pdf.set_xy(8,y)
             pdf.set_font("base","",11)
-            pdf.cell(0,6,f"{n} {PDF_NAMES[n]} — {PDF_WORD.get(stt,'не проверяется')}",new_x=2,new_y=1)
+            pdf.cell(0,6,f"{n} {PDF_NAMES[n]} — {PDF_WORD.get(stt,'не проверяется')}",new_x=XPos.LMARGIN,new_y=YPos.NEXT)
             pdf.set_xy(8,pdf.get_y())
             pdf.set_font("base","",10)
             pdf.set_text_color(60,60,60)
-            txt=re.sub(r"^(✅|⚠️|❌|➖)\s*","",det.get(n,""))
+            txt=re.sub(r"^(✅|⚠️||➖)\s*","",det.get(n,""))
             if txt:
                 pdf.multi_cell(0,5,txt)
             pdf.set_text_color(25,25,25)
         if crops:
             pdf.add_page()
             pdf.set_font("base","",13)
-            pdf.cell(0,8,"Фрагменты проверенных зон",new_x=2,new_y=1)
+            pdf.cell(0,8,"Фрагменты проверенных зон",new_x=XPos.LMARGIN,new_y=YPos.NEXT)
             for n,cb,cap in crops:
                 try:
                     bio=io.BytesIO(base64.b64decode(cb))
@@ -1002,7 +1006,7 @@ def verify_reds(cid,s,rep,details,model):
         up=vr.upper()
         if "ОПРОВЕРГАЮ" in up:
             st_line=parse(vr,"СТАТУС")
-            newst=next((e for e in ("➖","️") if e in st_line),"⚠️")
+            newst=next((e for e in ("➖","⚠️") if e in st_line),"⚠️")
             why=parse(vr,"ПОЧЕМУ") or "видимых доказательств маркера нет"
             if newst=="➖":
                 newfirst=f"{n} ➖ {PDF_NAMES.get(n,'')}: деталь не проверяется по заявленному маркеру: {why}"
@@ -1108,7 +1112,7 @@ def do_recheck(cid,s,n,b64):
         bot.send_message(cid,BUSY_TEXT)
         return
     line=parse(rc,"СТАТУС")
-    newst=next((e for e in ("❌","⚠️","✅","➖") if e in line),"➖")
+    newst=next((e for e in ("❌","️","✅","") if e in line),"➖")
     s["details"][n]=newst
     s["rechecks"]=s.get("rechecks",0)+1
     s["stage"]="done"
