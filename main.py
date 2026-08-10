@@ -33,6 +33,7 @@ DELAY_EXP=300
 MSK=timezone(timedelta(hours=3))
 
 FONT_PATH=next((p for p in ("arial.ttf","Arial.ttf","DejaVuSans.ttf",
+"/app/arial.ttf",
 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 "/usr/share/fonts/dejavu/DejaVuSans.ttf") if os.path.exists(p)),None)
 
@@ -1001,7 +1002,7 @@ def verify_reds(cid,s,rep,details,model):
         up=vr.upper()
         if "ОПРОВЕРГАЮ" in up:
             st_line=parse(vr,"СТАТУС")
-            newst=next((e for e in ("➖","⚠️") if e in st_line),"⚠️")
+            newst=next((e for e in ("➖","️") if e in st_line),"⚠️")
             why=parse(vr,"ПОЧЕМУ") or "видимых доказательств маркера нет"
             if newst=="➖":
                 newfirst=f"{n} ➖ {PDF_NAMES.get(n,'')}: деталь не проверяется по заявленному маркеру: {why}"
@@ -1057,7 +1058,9 @@ def verify_batch_ocr(cid,s,rep,model):
         logging.info("OCR_CROSS cid=%s match",cid)
         return rep
     logging.info("OCR_CROSS cid=%s mismatch c1=%s c2=%s rep=%s",cid,c1,c2,code1)
-    rep=re.sub(r"((?:код на флаконе|батч)[^\n]{0,20}?)читается как\s*[A-Za-z0-9]{4,12}",r"\1 читается, точная цитата не приводится",rep,flags=re.I)
+    rep=re.sub(r"((?:код на флаконе|батч)[^\n]{0,20}?)читается как\s*[A-Za-z0-9]{4,12}",r"\1читается, точная цитата не приводится",rep,flags=re.I)
+    rep=re.sub(r"\.?\s*коды совпадают[^\n]*",". Сверка кодов не проводилась.",rep,flags=re.I)
+    rep=re.sub(r"\.?\s*совпадает с кодом на коробке[^\n]*",". Сверка с коробкой не проводилась.",rep,flags=re.I)
     return rep
 
 def send_crops(cid,s):
