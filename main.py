@@ -38,7 +38,10 @@ FONT_PATH=next((p for p in ("arial.ttf","Arial.ttf","DejaVuSans.ttf",
 "/usr/share/fonts/dejavu/DejaVuSans.ttf") if os.path.exists(p)),None)
 if not FONT_PATH:
     FONT_PATH=next(iter(glob.glob("/app/**/*.ttf",recursive=True)),None)
-logging.info("FONT_PATH=%s",FONT_PATH)
+FONT_BOLD=next((p for p in ("arialbd.ttf","Arial_Bold.ttf","/app/arialbd.ttf") if os.path.exists(p)),None)
+if not FONT_BOLD:
+    FONT_BOLD=FONT_PATH
+logging.info("FONT_PATH=%s FONT_BOLD=%s",FONT_PATH,FONT_BOLD)
 
 bot=telebot.TeleBot(TOKEN,threaded=True)
 S={}
@@ -85,9 +88,9 @@ TIER A (ур.2, всегда активен):
 - Контровый свет, блики, отражения и световые ореолы на стекле, дымка при съёмке против света — НЕ дефекты полиграфии и стекла. ❌ по п.5/п.6 ТОЛЬКО если дефект виден независимо от бликов и описан точно: где (край, дно, зона этикетки) и что (пузырь, скол, плывущая буква).
 - Батч, нечитаемый на фото (тусклая гравировка, блики), — НЕ ❌-маркер: если шаг пропущен или фото нечитаемо, деталь 03 помечается «➖ не проверяется». Нечитаемость батча НЕ интерпретируй как вмешательство в код.
 - ❌-маркер — ТОЛЬКО с конкретным основанием: процитируй, что именно читается/видится на фото, и объясни, чему это должно быть у оригинала. Расплывчатые формулировки («видны несоответствия», «такие как…») БЕЗ конкретики — НЕ маркеры. В ❌-обосновании укажи номер пункта списка (Tier A/B).
-- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ️/❌.
+- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ⚠️/❌.
 - ✅ по сверке батчей требует цитат ОБЕИХ кодов; без кода на коробке — «сверка с коробкой не проводилась», а не «совпадает».
-- Точные цифры (штрихкод, адрес, REF) в отчёте НЕ цитируй — только наличие блоков надписей. Точные цитаты разрешены ТОЛЬКО для батч-кодов.
+- Точные цифры (штрихкод, адрес, REF) в отчёте НЕ цитируй — только наличие блоков надписей. Точные цитаты разрешены ТОЛЬКО для батч-кодов, объёма/концентрации и гравировки крышки, и ТОЛЬКО если уверена в каждом символе.
 - ✅ НЕ содержит оговорок со словом «однако» и перечислений дефектов; честная приписка о том, какая часть детали не оценивалась (например, без кадра против света), разрешена ТОЛЬКО отдельным предложением без «однако».
 - ➖ НЕ содержит оценок: если деталь видна в кадре — ставь ✅/⚠️/❌ с обоснованием; если деталь видна частично (например, нет кадра против света) — оценивай то, что видно, и честно укажи, какая часть не оценивалась; ➖ — ТОЛЬКО если деталь не видна или не применима, без выводов о её состоянии.
 - Основание в плашке итога — ТОЛЬКО из формализованных статусов деталей (❌/⚠️); не упоминай в плашке признаки, которые не оформлены в деталях.
@@ -177,7 +180,7 @@ TIER A (ур.2, всегда активен):
 - В закрытом списке НЕТ маркеров крышки: аномалии крышки — максимум ⚠️, никогда ❌.
 - Посадку крышки НЕ оценивай и НЕ упоминай в отчёте: по 05 оценивай только форму, материал, гравировку и надписи. НЕ пиши «плотно сидит» и НЕ пиши «посадка не оценивалась».
 - REF/артикул (например PODE100), штрихкод, адрес и состав на коробке — НЕ батч-код и НЕ маркеры.
-- Точные цифры (штрихкод, адрес, REF) в отчёте НЕ цитируй — только наличие блоков надписей. Точные цитаты разрешены ТОЛЬКО для батч-кодов.
+- Точные цифры (штрихкод, адрес, REF) в отчёте НЕ цитируй — только наличие блоков надписей. Точные цитаты разрешены ТОЛЬКО для батч-кодов, объёма/концентрации и гравировки крышки, и ТОЛЬКО если уверена в каждом символе.
 - Если коробки нет в кадре — 01 оценивается ТОЛЬКО по этикетке флакона; фон и его цвета — НЕ упаковка; «отсутствуют ожидаемые надписи/логотип/цвет» — НЕ маркер.
 - Контровый свет, блики, отражения и световые ореолы на стекле, дымка при съёмке против света — НЕ дефекты полиграфии и стекла. ❌ по (5)/(6) ТОЛЬКО если дефект виден независимо от бликов и описан точно: где (край, дно, зона этикетки) и что (пузырь, скол, плывущая буква).
 - В шагах без текста (крышка, завальцовка, трубочка, стекло) «читаемо» означает: деталь хорошо видна в кадре; надписи не требуются.
@@ -189,9 +192,9 @@ TIER A (ур.2, всегда активен):
 Пример Г: код на флаконе читается, а кода на коробке в кадре нет → по 03 пиши: код на флаконе читается (цитата); сверка с коробкой не проводилась. НЕ пиши «совпадает».
 Пример Д: крышка лежит отдельно от флакона → по 05 оценивай форму, материал, гравировку; про посадку НЕ пиши.
 
-Всё вне списка (целлофан, цвет жидкости, уровень наполнения, «магнит крышки», отсутствие вкладышей, потёртости) — НЕ ❌, максимум ⚠️ с конкретикой. Не выдумывай «обязательные элементы» бренда вне списка. 🔴 — только при 2+ ❌ из списка; ровно 1 ❌ — ⚠️. Деталь не видна или не применима (трубочка у роликового флакона) — «➖ не проверяется», никогда ✅. Форматы батчей по рынкам различаются — сами по себе НЕ маркеры. Нет кадра против света — маркер по трубочке не применяется.
+Всё вне списка (целлофан, цвет жидкости, уровень наполнения, «магнит крышки», отсутствие вкладышей, потёртости) — НЕ ❌, максимум ️ с конкретикой. Не выдумывай «обязательные элементы» бренда вне списка. 🔴 — только при 2+ ❌ из списка; ровно 1 ❌ — ⚠️. Деталь не видна или не применима (трубочка у роликового флакона) — «➖ не проверяется», никогда ✅. Форматы батчей по рынкам различаются — сами по себе НЕ маркеры. Нет кадра против света — маркер по трубочке не применяется.
 - Батч нечитаем из-за бликов или тусклой гравировки — «➖ не проверяется»; НЕ интерпретируй нечитаемость как вмешательство в код.
-- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ️/❌.
+- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ⚠️/❌.
 - ✅ НЕ содержит оговорок со словом «однако»; честная приписка, какая часть детали не оценивалась, разрешена отдельным предложением без «однако».
 - ➖ НЕ содержит оценок: деталь видна в кадре — ставь ✅/⚠️/❌ с обоснованием; видна частично — оценивай то, что видно, и укажи, какая часть не оценивалась; ➖ — ТОЛЬКО если деталь не видна или не применима, без выводов о её состоянии.
 
@@ -212,7 +215,7 @@ MODE_VERIFY="""КОНТРОЛЬНАЯ ПРОВЕРКА (адверсариаль
 Ответь СТРОГО в формате:
 ПРОБЫ: [по каждой пробе: да/нет/не вижу — через ;]
 ВЕРДИКТ: ПОДТВЕРЖДАЮ или ОПРОВЕРГАЮ
-СТАТУС: ❌/️/➖
+СТАТУС: ❌/⚠️/➖
 ПОЧЕМУ: одно предложение."""
 
 MODE_VERIFY_BATCH="""КОНТРОЛЬНАЯ ПРОВЕРКА СВЕРКИ. Продукт: «{name}».
@@ -226,6 +229,18 @@ MODE_VERIFY_BATCH="""КОНТРОЛЬНАЯ ПРОВЕРКА СВЕРКИ. Пр�
 MODE_OCR="""Прочитай батч-код на флаконе.
 Ответь СТРОГО одной строкой в формате:
 КОД НА ФЛАКОНЕ: [цитата или «не виден»]"""
+
+MODE_OCR_BOX="""Прочитай батч-код на коробке.
+Ответь СТРОГО одной строкой в формате:
+КОД НА КОРОБКЕ: [цитата или «не виден»]"""
+
+MODE_OCR_VOL="""Прочитай объём и концентрацию, указанные на флаконе или коробке.
+Ответь СТРОГО одной строкой в формате:
+ОБЪЁМ И КОНЦЕНТРАЦИЯ: [цитата или «не видны»]"""
+
+MODE_OCR_CAP="""Прочитай гравировку или надписи на крышке.
+Ответь СТРОГО одной строкой в формате:
+НАДПИСЬ НА КРЫШКЕ: [цитата или «не видна»]"""
 
 MODE_FRAG="""Посмотри на фрагмент фото.
 {q}
@@ -492,13 +507,19 @@ def build_pdf(s,rep,crops):
         pdf.set_auto_page_break(True,15)
         pdf.add_page()
         pdf.add_font("base","",FONT_PATH)
-        pdf.set_font("base","",15)
-        pdf.set_text_color(25,25,25)
+        pdf.add_font("base","B",FONT_BOLD)
+        pdf.set_fill_color(24,26,35)
+        pdf.rect(0,0,210,28,"F")
+        pdf.set_xy(10,8)
+        pdf.set_font("base","B",15)
+        pdf.set_text_color(255,255,255)
         pdf.cell(0,9,"LEGIT·CHECK — отчёт по разбору",new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-        pdf.set_font("base","",9)
-        pdf.set_text_color(120,120,120)
+        pdf.set_xy(10,18)
+        pdf.set_font("base","",8)
+        pdf.set_text_color(190,195,205)
         pdf.cell(0,5,"Дата: "+datetime.now(MSK).strftime("%d.%m.%Y")+"   Продукт: "+(s.get("name") or "—")+"   Тариф: "+(s.get("tariff") or "—"),new_x=XPos.LMARGIN,new_y=YPos.NEXT)
-        pdf.ln(4)
+        pdf.set_y(34)
+        pdf.set_text_color(25,25,25)
         segs=re.split(r"(?m)^(0[1-5])\s*",rep)
         head=re.sub(r"^[🔴️🟢\s]+","",segs[0]).strip()
         det={}
@@ -516,9 +537,8 @@ def build_pdf(s,rep,crops):
         y=pdf.get_y()
         pdf.ellipse(2,y+1,4,4,"F")
         pdf.set_xy(8,y)
-        pdf.set_font("base","",11)
-        pdf.set_text_color(25,25,25)
-        pdf.multi_cell(0,6,head)
+        pdf.set_font("base","B",11)
+        pdf.multi_cell(0,6,head,align="L")
         for n in ("01","02","03","04","05"):
             stt=s["details"].get(n,"➖")
             pdf.ln(2)
@@ -526,18 +546,19 @@ def build_pdf(s,rep,crops):
             pdf.set_fill_color(*status_color(stt))
             pdf.ellipse(2,y+1,4,4,"F")
             pdf.set_xy(8,y)
-            pdf.set_font("base","",11)
+            pdf.set_font("base","B",11)
+            pdf.set_text_color(25,25,25)
             pdf.cell(0,6,f"{n} {PDF_NAMES[n]} — {PDF_WORD.get(stt,'не проверяется')}",new_x=XPos.LMARGIN,new_y=YPos.NEXT)
             pdf.set_xy(8,pdf.get_y())
             pdf.set_font("base","",10)
             pdf.set_text_color(60,60,60)
-            txt=re.sub(r"^(✅|⚠️||➖)\s*","",det.get(n,""))
+            txt=re.sub(r"^(✅|⚠️|❌|➖)\s*","",det.get(n,""))
             if txt:
-                pdf.multi_cell(0,5,txt)
+                pdf.multi_cell(0,5,txt,align="L")
             pdf.set_text_color(25,25,25)
         if crops:
             pdf.add_page()
-            pdf.set_font("base","",13)
+            pdf.set_font("base","B",13)
             pdf.cell(0,8,"Фрагменты проверенных зон",new_x=XPos.LMARGIN,new_y=YPos.NEXT)
             for n,cb,cap in crops:
                 try:
@@ -545,7 +566,7 @@ def build_pdf(s,rep,crops):
                     pdf.image(bio,x=15,w=90)
                     pdf.set_font("base","",9)
                     pdf.set_text_color(90,90,90)
-                    pdf.multi_cell(0,5,cap)
+                    pdf.multi_cell(0,5,cap,align="L")
                     pdf.set_text_color(25,25,25)
                     pdf.ln(3)
                 except Exception:
@@ -556,8 +577,17 @@ def build_pdf(s,rep,crops):
             pdf.set_text_color(110,110,110)
             for line in tail.splitlines():
                 if line.strip():
-                    pdf.multi_cell(0,5,line.strip())
+                    pdf.multi_cell(0,5,line.strip(),align="L")
                     pdf.ln(1)
+        total=pdf.pages_count
+        for i in range(1,total+1):
+            pdf.page=i
+            pdf.set_y(-12)
+            pdf.set_font("base","",8)
+            pdf.set_text_color(140,140,140)
+            pdf.cell(160,5,"Legit Check Perfume · legitcheck-perfume.vercel.app",align="L")
+            pdf.cell(0,5,f"стр. {i}/{total}",align="R",new_x=XPos.LMARGIN,new_y=YPos.NEXT)
+        pdf.page=total
         return pdf.output()
     except Exception:
         logging.exception("pdf: сборка")
@@ -615,7 +645,7 @@ def parse_details(rep):
     for line in rep.splitlines():
         m=re.match(r'^(0[1-5])\b',line.strip())
         if not m: continue
-        st=next((e for e in ("❌","⚠️","➖","✅") if e in line),None)
+        st=next((e for e in ("❌","️","➖","✅") if e in line),None)
         if st: d[m.group(1)]=st
     return d
 
@@ -1063,8 +1093,59 @@ def verify_batch_ocr(cid,s,rep,model):
         return rep
     logging.info("OCR_CROSS cid=%s mismatch c1=%s c2=%s rep=%s",cid,c1,c2,code1)
     rep=re.sub(r"((?:код на флаконе|батч)[^\n]{0,20}?)читается как\s*[A-Za-z0-9]{4,12}",r"\1читается, точная цитата не приводится",rep,flags=re.I)
-    rep=re.sub(r"\.?\s*коды совпадают[^\n]*",". Сверка кодов не проводилась.",rep,flags=re.I)
+    rep=re.sub(r"сверка батчей проведена,?","сверка кодов не проводилась.",rep,flags=re.I)
+    rep=re.sub(r"\.?\s*коды совпадают[^\n]*",".",rep,flags=re.I)
     rep=re.sub(r"\.?\s*совпадает с кодом на коробке[^\n]*",". Сверка с коробкой не проводилась.",rep,flags=re.I)
+    rep=re.sub(r"\.{2,}",".",rep)
+    rep=re.sub(r",\s*\.",".",rep)
+    rep=re.sub(r"\.\s*,",".",rep)
+    return rep
+
+def verify_extra_citations(cid,s,rep,model):
+    other=QWEN3_MODEL if model==QWEN_MODEL else QWEN_MODEL
+    nrm=lambda t: re.sub(r"[^0-9a-zа-яё]+","",t or "").lower()
+    m=re.search(r"(?:код на коробке|на коробке[^\n]{0,30}код)[^\n]{0,20}?([A-Za-z0-9]{4,12})",rep,re.I)
+    if m:
+        cit=m.group(1)
+        try:
+            c1=parse(ask_qwen(s["photos"],MODE_OCR_BOX,model,timeout=60,attempts=1,use_system=False,temperature=0),"КОД НА КОРОБКЕ")
+            c2=parse(ask_qwen(s["photos"],MODE_OCR_BOX,other,timeout=60,attempts=1,use_system=False,temperature=0),"КОД НА КОРОБКЕ")
+        except Exception:
+            logging.exception("cross box")
+            c1=c2=""
+        if not (nrm(c1)==nrm(cit) and nrm(c2)==nrm(cit)):
+            rep=re.sub(r"((?:код на коробке|на коробке[^\n]{0,30}код)[^\n]{0,20}?)"+re.escape(cit),r"\1код читается, точная цитата не приводится",rep,count=1,flags=re.I)
+            logging.info("CROSS_BOX cid=%s citation removed",cid)
+        else:
+            logging.info("CROSS_BOX cid=%s confirmed",cid)
+    m=re.search(r"(\d{1,3}\s*(?:мл|ml)\b[^\n]{0,20}(?:EDP|EDT|eau de \w+|парфюмерная вода|туалетная вода)?|(?:EDP|EDT|eau de \w+|парфюмерная вода|туалетная вода))",rep,re.I)
+    if m:
+        cit=m.group(1)
+        try:
+            c1=parse(ask_qwen(s["photos"],MODE_OCR_VOL,model,timeout=60,attempts=1,use_system=False,temperature=0),"ОБЪЁМ И КОНЦЕНТРАЦИЯ")
+            c2=parse(ask_qwen(s["photos"],MODE_OCR_VOL,other,timeout=60,attempts=1,use_system=False,temperature=0),"ОБЪЁМ И КОНЦЕНТРАЦИЯ")
+        except Exception:
+            logging.exception("cross vol")
+            c1=c2=""
+        if not (nrm(cit) and nrm(cit) in nrm(c1) and nrm(cit) in nrm(c2)):
+            rep=rep.replace(cit,"объём и концентрация читаются, точная цитата не приводится",1)
+            logging.info("CROSS_VOL cid=%s citation removed",cid)
+        else:
+            logging.info("CROSS_VOL cid=%s confirmed",cid)
+    m=re.search(r"(?:гравировка|надпис[ьи]) на крышке читается как\s*[\"']?([^\"'\n]{3,60})",rep,re.I)
+    if m:
+        cit=m.group(1).strip()
+        try:
+            c1=parse(ask_qwen(s["photos"],MODE_OCR_CAP,model,timeout=60,attempts=1,use_system=False,temperature=0),"НАДПИСЬ НА КРЫШКЕ")
+            c2=parse(ask_qwen(s["photos"],MODE_OCR_CAP,other,timeout=60,attempts=1,use_system=False,temperature=0),"НАДПИСЬ НА КРЫШКЕ")
+        except Exception:
+            logging.exception("cross cap")
+            c1=c2=""
+        if not (nrm(cit) and nrm(cit) in nrm(c1) and nrm(cit) in nrm(c2)):
+            rep=rep.replace(cit,"надпись читается, точная цитата не приводится",1)
+            logging.info("CROSS_CAP cid=%s citation removed",cid)
+        else:
+            logging.info("CROSS_CAP cid=%s confirmed",cid)
     return rep
 
 def send_crops(cid,s):
@@ -1112,7 +1193,7 @@ def do_recheck(cid,s,n,b64):
         bot.send_message(cid,BUSY_TEXT)
         return
     line=parse(rc,"СТАТУС")
-    newst=next((e for e in ("❌","️","✅","") if e in line),"➖")
+    newst=next((e for e in ("❌","️","✅","") if e in line),"")
     s["details"][n]=newst
     s["rechecks"]=s.get("rechecks",0)+1
     s["stage"]="done"
@@ -1159,6 +1240,7 @@ def do_report(cid):
     rep,details=verify_reds(cid,s,rep,details,model)
     rep=verify_batch_claim(cid,s,rep,model)
     rep=verify_batch_ocr(cid,s,rep,model)
+    rep=verify_extra_citations(cid,s,rep,model)
     rep=re.sub(r"\([^)\n]*п\.\s*\d+[^)\n]*\)","",rep)
     rep=re.sub(r"[^\n]*Каждый пункт отчёта[^\n]*\n?","",rep)
     rep=re.sub(r"\n{3,}","\n\n",rep)
@@ -1417,6 +1499,14 @@ def process_image(cid,s,b64,comp):
         bot.send_message(cid,"Этот кадр не подходит ни к одному из оставшихся шагов. Осталось:\n"+remaining)
         return
     if not readable:
+        try:
+            rchk=ask_qwen([b64],MODE0C2.format(name=s["name"] or "?",step=s["queue"][n-1],hint=hint_for(s["queue"][n-1],s.get("ff","default"),obj)),model,timeout=45,attempts=1,temperature=0)
+        except Exception:
+            logging.exception("mode0c2 recheck")
+            rchk=""
+        if rchk and parse(rchk,"СОВПАДЕНИЕ").lower().startswith("да") and parse(rchk,"ЧИТАЕМО").lower().startswith("да"):
+            accept_step(cid,s,n,b64)
+            return
         if "батч" in s["queue"][n-1].lower():
             s["photos"].append(b64)
         adv=unread_advice(s,n,parse(res,"СОВЕТ"))
