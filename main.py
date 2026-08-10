@@ -1,4 +1,4 @@
-import os, base64, logging, io, time, re, threading, json, html
+import os, base64, logging, io, time, re, threading, json, html, uuid
 from datetime import datetime
 import telebot
 from telebot import types
@@ -342,7 +342,8 @@ def yk_create(cid,amount,label):
     body={"amount":{"value":f"{amount}.00","currency":"RUB"},"capture":True,
     "confirmation":{"type":"redirect"},"description":label,
     "metadata":{"cid":str(cid)}}
-    r=requests.post("https://api.yookassa.ru/v3/payments",auth=(YK_SHOP,YK_KEY),json=body,timeout=30)
+    r=requests.post("https://api.yookassa.ru/v3/payments",auth=(YK_SHOP,YK_KEY),json=body,timeout=30,
+        headers={"Idempotence-Key":str(uuid.uuid4())})
     if r.status_code!=200:
         logging.error("YK_CREATE_FAIL %s shop_len=%d key_len=%d body=%s",r.status_code,len(YK_SHOP),len(YK_KEY),r.text[:800])
     r.raise_for_status()
