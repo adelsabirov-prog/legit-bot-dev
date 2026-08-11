@@ -60,8 +60,8 @@ try:
     from rapidocr_onnxruntime import RapidOCR
     OCR3=RapidOCR()
     logging.info("OCR3 RapidOCR ready")
-except Exception:
-    logging.info("OCR3 import failed: %r,e")
+except Exception as e:
+    logging.error("OCR3 import failed: "+repr(e))
 
 def ocr3_read(b64):
     if OCR3 is None: return None
