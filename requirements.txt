@@ -4,3 +4,4 @@ python-dotenv
 Pillow
 pillow-heif
 fpdf2
+rapidocr-onnxruntime
