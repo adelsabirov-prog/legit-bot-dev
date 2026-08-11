@@ -5,3 +5,4 @@ Pillow
 pillow-heif
 fpdf2
 rapidocr-onnxruntime
+opencv-python-headless
