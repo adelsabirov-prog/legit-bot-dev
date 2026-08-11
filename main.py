@@ -76,13 +76,21 @@ def ocr3_read(b64):
         logging.exception("ocr3 read")
         return None
 
+def norm_code(x):
+    return re.sub(r"[^A-Za-z0-9]","",""+(x or "")).upper()
+
 def decide_code(rs):
-    rs=[r for r in rs if r and "НЕ ВИДЕН" not in r]
-    if not rs: return None
-    cnt={}
-    for r in rs: cnt[r]=cnt.get(r,0)+1
-    best=max(cnt,key=cnt.get)
-    return best if cnt[best]>=2 else None
+    cs=[c for c in (norm_code(x) for x in rs) if c and "НЕ ВИДЕН" not in c]
+    if not cs: return None
+    def canon(x):
+        pref=[o for o in cs if len(o)>=6 and x.startswith(o)]
+        return min(pref,key=len) if pref else x
+    votes={}
+    for c in cs:
+        k=canon(c)
+        votes[k]=votes.get(k,0)+1
+    best=max(votes,key=votes.get)
+    return best if votes[best]>=2 else None
 
 # ── Каталог (нормализация имени) ──────────────────────────────────────────
 def norm_name(t):
@@ -683,13 +691,13 @@ def unread_advice(s,n,advice):
 def batch_retake(cid,s,n,step_name,obj):
     r=s.get("retakes",0)
     s["retakes"]=r+1
-    msg=f"📥 Шаг {n}: код пока не читается безошибочно. Переснимите макро: "+hint_for(step_name,s.get("ff","default"),obj)
-    if r>=1:
-        msg+="\nКод может быть прозрачным и малозаметным — посмотрите дно на свету. Если код прозрачный и не виден — положите флакон на тёмную бумагу и снимите дно на её фоне."
-    if r>=2:
-        msg+="\nЕсли не получается — напишите «нет», и эта деталь не будет разбираться."
-    else:
+    if r==0:
+        msg=f"📥 Шаг {n}: код пока не читается. Переснимите макро: Код может быть прозрачным и малозаметным — посмотрите дно на свету. Если код прозрачный и не виден — положите флакон на тёмную бумагу и снимите дно на её фоне."
         msg+="\nПопробуйте ещё раз — у вас получится!"
+    else:
+        msg=f"📥 Шаг {n}: код пока не читается. Переснимите макро: "+hint_for(step_name,s.get("ff","default"),obj)
+        msg+="\nПопробуйте ещё раз — у вас получится!"
+        msg+="\nЕсли не получается — напишите «нет», и эта деталь не будет разбираться."
     bot.send_message(cid,msg)
 
 def models_pair(s):
@@ -715,10 +723,12 @@ def cross_batch(cid,s,n,b64):
         return None,"fail"
     c3=ocr3_read(b64)
     code=decide_code([c1,c2,c3])
-    logging.info("CROSS_BATCH cid=%s n=%d m1=%s m2=%s c1=%s c2=%s c3=%s code=%s verdict=%s",cid,n,model,other,c1,c2,c3,code,"fixed" if code else "mismatch")
+    nobody=(not c1 or "НЕ ВИДЕН" in c1) and (not c2 or "НЕ ВИДЕН" in c2) and not code
+    verdict="fixed" if code else ("fail" if nobody else "mismatch")
+    logging.info("CROSS_BATCH cid=%s n=%d m1=%s m2=%s c1=%s c2=%s c3=%s code=%s verdict=%s",cid,n,model,other,c1,c2,c3,code,verdict)
     if code:
         return code,"fixed"
-    return None,"mismatch"
+    return None,verdict
 
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
@@ -1544,8 +1554,11 @@ def process_image(cid,s,b64,comp):
     try:
         if "батч" in step_name.lower():
             code,stt=cross_batch(cid,s,n,b64)
-            if stt=="mismatch":
+            if stt in ("mismatch","fail"):
                 batch_retake(cid,s,n,step_name,obj)
+                return
+            if stt=="error":
+                accept_step(cid,s,n,b64)
                 return
             if code:
                 s["facts"]["batch_box" if "короб" in step_name.lower() else "batch_bottle"]=code
