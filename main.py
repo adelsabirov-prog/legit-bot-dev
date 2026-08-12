@@ -775,6 +775,17 @@ def center_crop_b64(b64,frac=0.6):
     buf=io.BytesIO(); im.save(buf,"JPEG",quality=88)
     return base64.b64encode(buf.getvalue()).decode()
 
+MODE_CODECHARS="""Рассмотри батч-код на фото. Перечисли его символы ПО ПОРЯДКУ, каждый отдельно, через пробел (цифры и буквы — как видишь каждый отдельный символ).
+Ответь СТРОГО в формате:
+СИМВОЛЫ: A 1 B 2 C 3"""
+
+def parse_chars(res):
+    line=parse(res,"СИМВОЛЫ")
+    if not line:
+        return ""
+    toks=re.sub(r"[^A-Za-z0-9]"," ",line).split()
+    return "".join(t[0].upper() for t in toks if t)
+
 def round2_crop(cid,s,n,b64,prompt,key,model,other):
     cb64=None
     try:
@@ -799,12 +810,12 @@ def round2_crop(cid,s,n,b64,prompt,key,model,other):
     except Exception:
         logging.exception("round2 crop send")
     try:
-        r1=ask_qwen([cb64],prompt,model,timeout=60,attempts=1,use_system=False,temperature=0)
-        r2=ask_qwen([cb64],prompt,other,timeout=60,attempts=1,use_system=False,temperature=0)
+        r1=ask_qwen([cb64],MODE_CODECHARS,model,timeout=60,attempts=1,use_system=False,temperature=0)
+        r2=ask_qwen([cb64],MODE_CODECHARS,other,timeout=60,attempts=1,use_system=False,temperature=0)
     except Exception:
         logging.exception("round2 read")
         return None
-    c1=parse(r1,key).strip().upper(); c2=parse(r2,key).strip().upper()
+    c1=parse_chars(r1); c2=parse_chars(r2)
     c3=ocr3_read(cb64)
     code,confuz=decide_code2([c1,c2,c3])
     logging.info("ROUND2 cid=%s n=%d c1=%s c2=%s c3=%s code=%s confuz=%s",cid,n,c1,c2,c3,code,confuz)
