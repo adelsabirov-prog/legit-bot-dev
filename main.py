@@ -777,13 +777,9 @@ def round2_crop(cid,s,n,b64,prompt,key,model,other):
         logging.exception("round2 crop")
         return None
     try:
-        chk=ask_qwen([cb64],MODE_FRAG.format(q=FRAG_PROBES.get("03","")),model,timeout=30,attempts=1,use_system=False,temperature=0)
-        if not chk.strip().lower().startswith("да"):
-            logging.info("ROUND2_FRAG_REJECT cid=%s n=%d",cid,n)
-            return None
+        bot.send_photo(OWNER_ID,io.BytesIO(base64.b64decode(cb64)),caption=f"ROUND2 CROP n={n}")
     except Exception:
-        logging.exception("round2 frag")
-        return None
+        logging.exception("round2 crop send")
     try:
         r1=ask_qwen([cb64],prompt,model,timeout=60,attempts=1,use_system=False,temperature=0)
         r2=ask_qwen([cb64],prompt,other,timeout=60,attempts=1,use_system=False,temperature=0)
