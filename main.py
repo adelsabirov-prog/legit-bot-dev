@@ -762,20 +762,38 @@ def cross_batch(cid,s,n,b64):
     logging.info("CROSS_BATCH cid=%s n=%d round2=none",cid,n)
     return None,"mismatch"
 
+MODE_CODEBBOX="""Посмотри на фото. Найди батч-код — короткую строку из цифр и букв (гравировка или печать). Отметь МИНИМАЛЬНУЮ область, содержащую именно символы кода; не край дна, не пальцы, не крышку. Если код не виден — ответь 0 0 0 0.
+Ответь СТРОГО одной строкой:
+ОБЛАСТЬ: x1 y1 x2 y2"""
+
+def center_crop_b64(b64,frac=0.6):
+    im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+    w,h=im.size
+    x1=int(w*(1-frac)/2); y1=int(h*(1-frac)/2)
+    x2=int(w*(1+frac)/2); y2=int(h*(1+frac)/2)
+    im=im.crop((x1,y1,x2,y2))
+    buf=io.BytesIO(); im.save(buf,"JPEG",quality=88)
+    return base64.b64encode(buf.getvalue()).decode()
+
 def round2_crop(cid,s,n,b64,prompt,key,model,other):
+    cb64=None
     try:
-        res=ask_qwen([b64],MODE_BBOX.format(name=s["name"] or "?",n=1,nums="03"),model,timeout=60,attempts=1,temperature=0)
+        res=ask_qwen([b64],MODE_CODEBBOX,model,timeout=60,attempts=1,use_system=False,temperature=0)
+        m=re.search(r"ОБЛАСТЬ:\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)",res)
+        if m:
+            x1,y1,x2,y2=[int(v) for v in m.groups()]
+            area=(x2-x1)*(y2-y1)
+            if x2>x1 and y2>y1 and 20000<=area<=950000:
+                cb64=crop_b64(b64,[x1,y1,x2,y2])
     except Exception:
         logging.exception("round2 bbox")
-        return None
-    m=re.search(r"03\s*:\s*ФОТО:\s*(\d+)\s*ОБЛАСТЬ:\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)",res)
-    if not m:
-        return None
-    try:
-        cb64=crop_b64(b64,[int(x) for x in m.groups()[1:]])
-    except Exception:
-        logging.exception("round2 crop")
-        return None
+    if not cb64:
+        try:
+            cb64=center_crop_b64(b64,0.6)
+            logging.info("ROUND2_CENTER_FALLBACK cid=%s n=%d",cid,n)
+        except Exception:
+            logging.exception("round2 center crop")
+            return None
     try:
         bot.send_photo(OWNER_ID,io.BytesIO(base64.b64decode(cb64)),caption=f"ROUND2 CROP n={n}")
     except Exception:
