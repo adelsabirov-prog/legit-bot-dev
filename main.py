@@ -64,7 +64,8 @@ def ocr3_read(b64):
     if _ocr3 is None: return None
     try:
         import numpy as np
-        arr=np.frombuffer(base64.b64decode(b64),dtype=np.uint8)
+        im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+        arr=np.array(im)
         r,_=_ocr3(arr)
         if not r: return None
         txt="".join(line[1] for line in r)
@@ -1475,7 +1476,7 @@ def on_paid(cid,s):
     remove_pending(cid)
     logging.info("PAY_SUCCEEDED cid=%s",cid)
     if s.get("tariff")=="Экспресс":
-        delay=DELAY_EXP; sla="в течение 15 минут."
+        delay=5; sla="в течение 15 минут."
     else:
         delay=DELAY_STD; sla="в течение 3 часов."
     save_session(cid,s)
