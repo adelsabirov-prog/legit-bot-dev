@@ -1,81 +1,79 @@
-import os, base64, logging, io, time, re, threading, json, html, uuid, glob, unicodedata, difflib
+import os,io,re,json,time,base64,html,uuid,logging,threading,unicodedata,difflib
 from datetime import datetime,timezone,timedelta
+from contextlib import contextmanager
+import requests
 import telebot
 from telebot import types
-import requests
 from PIL import Image
-from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO,format="%(asctime)s,%(msecs)03d %(levelname)s %(message)s",datefmt="%Y-%m-%d %H:%M:%S")
 
-try:
-    from pillow_heif import register_heif_opener
-    register_heif_opener()
-except Exception:
-    pass
+# ── ОКРУЖЕНИЕ (сверьте имена с Railway) ────────────────────────────────────
+TOKEN=os.environ["TG_TOKEN"]
+QWEN_KEY=os.environ["QWEN_KEY"]
+YK_SHOP=os.environ["YK_SHOP"]
+YK_KEY=os.environ["YK_KEY"]
+OWNER_ID=int(os.environ.get("OWNER_ID","0"))
 
-load_dotenv()
-TOKEN=os.getenv("BOT_TOKEN")
-QWEN_KEY=os.getenv("QWEN_API_KEY")
-QWEN_MODEL=os.getenv("QWEN_MODEL","qwen/qwen2.5-vl-72b-instruct")
-QWEN3_MODEL=os.getenv("QWEN3_MODEL","qwen/qwen3-vl-235b-a22b-instruct")
-QWEN_CHEAP=os.getenv("QWEN_MODEL_CHEAP","qwen/qwen2.5-vl-72b-instruct")
-BASE=os.getenv("DASHSCOPE_BASE_URL","https://openrouter.ai/api/v1")
+BASE="https://openrouter.ai/api/v1"
+QWEN_MODEL="qwen/qwen2.5-vl-72b-instruct"
+QWEN3_MODEL="qwen/qwen3-vl-235b-a22b-instruct"
 OFERTA="https://legitcheck-perfume.vercel.app/oferta"
-PRIVACY=OFERTA+"#privacy"
-SUPPORT_URL="https://t.me/hedonistico"
-OWNER_ID=int(os.getenv("OWNER_CHAT_ID","178038600"))
-CASES_DIR=os.getenv("CASES_DIR","cases")
-YK_SHOP=os.getenv("YOOKASSA_SHOP_ID","")
-YK_KEY=os.getenv("YOOKASSA_SECRET_KEY","")
-PAY_FILE=os.path.join(CASES_DIR,"_pending_pays.json")
-JOBS_FILE=os.path.join(CASES_DIR,"_jobs.json")
-CATALOG_FILE=os.getenv("CATALOG_FILE","catalog.json")
-DELAY_STD=3600
-DELAY_EXP=300
+PRIVACY="https://legitcheck-perfume.vercel.app/privacy"
+SUPPORT_URL="https://t.me/legitcheck_support"
 MSK=timezone(timedelta(hours=3))
+CASES_DIR="cases"
+PAY_FILE="pending.json"
+JOBS_FILE="jobs.json"
+CATALOG_FILE="catalog.json"
+DELAY_EXP=15*60
+DELAY_STD=3*3600
 
-FONT_PATH=next((p for p in ("arial.ttf","Arial.ttf","DejaVuSans.ttf",
-"/app/arial.ttf",
-"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-"/usr/share/fonts/dejavu/DejaVuSans.ttf") if os.path.exists(p)),None)
-if not FONT_PATH:
-    FONT_PATH=next(iter(glob.glob("/app/**/*.ttf",recursive=True)),None)
+os.makedirs(CASES_DIR,exist_ok=True)
+
+FONT_PATH=None
+for _p in ("arial.ttf","/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
+    if os.path.exists(_p):
+        FONT_PATH=_p; break
 logging.info("FONT_PATH=%s",FONT_PATH)
 
-bot=telebot.TeleBot(TOKEN,threaded=True)
-S={}
-LOCKS={}
-def chat_lock(cid):
-    if cid not in LOCKS:
-        LOCKS[cid]=threading.Lock()
-    return LOCKS[cid]
+bot=telebot.TeleBot(TOKEN)
 
 def is_owner(cid):
-    return cid==OWNER_ID
+    return bool(OWNER_ID) and int(cid)==OWNER_ID
 
-# ── RapidOCR (мягкий импорт) ──────────────────────────────────────────────
-OCR3=None
+_LOCKS={}
+_LOCKS_GUARD=threading.Lock()
+@contextmanager
+def chat_lock(cid):
+    with _LOCKS_GUARD:
+        lk=_LOCKS.setdefault(cid,threading.Lock())
+    with lk:
+        yield
+
+# ── OCR3 (RapidOCR) ────────────────────────────────────────────────────────
 try:
     from rapidocr_onnxruntime import RapidOCR
-    OCR3=RapidOCR()
+    _ocr3=RapidOCR()
     logging.info("OCR3 RapidOCR ready")
 except Exception as e:
+    _ocr3=None
     logging.error("OCR3 import failed: "+repr(e))
 
 def ocr3_read(b64):
-    if OCR3 is None: return None
+    if _ocr3 is None: return None
     try:
         import numpy as np
-        im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
-        res,_=OCR3(np.array(im))
-        txt="".join(line[1] for line in (res or []))
-        m=re.findall(r"[A-Za-z0-9]{4,12}",txt)
-        return m[0].upper() if m else None
+        arr=np.frombuffer(base64.b64decode(b64),dtype=np.uint8)
+        r,_=_ocr3(arr)
+        if not r: return None
+        txt="".join(line[1] for line in r)
+        return txt.strip() or None
     except Exception:
         logging.exception("ocr3 read")
         return None
 
+# ── Голосование по коду ────────────────────────────────────────────────────
 CONF={"8":"B","0":"O","1":"I","5":"S","2":"Z","6":"G"}
 
 def canon_conf(s):
@@ -112,7 +110,7 @@ def decide_code(rs):
     code,_=decide_code2(rs)
     return code
 
-# ── Каталог (нормализация имени) ──────────────────────────────────────────
+# ── Каталог ────────────────────────────────────────────────────────────────
 def norm_name(t):
     t=unicodedata.normalize("NFD",t or "")
     t="".join(ch for ch in t if not unicodedata.combining(ch))
@@ -177,7 +175,7 @@ TIER A (ур.2, всегда активен):
 - Контровый свет, блики, отражения и световые ореолы на стекле, дымка при съёмке против света — НЕ дефекты полиграфии и стекла. ❌ по п.5/п.6 ТОЛЬКО если дефект виден независимо от бликов и описан точно: где (край, дно, зона этикетки) и что (пузырь, скол, плывущая буква).
 - Батч, нечитаемый на фото (тусклая гравировка, блики), — НЕ ❌-маркер: если шаг пропущен или фото нечитаемо, деталь 03 помечается «➖ не проверяется». Нечитаемость батча НЕ интерпретируй как вмешательство в код.
 - ❌-маркер — ТОЛЬКО с конкретным основанием: процитируй, что именно читается/видится на фото, и объясни, чему это должно быть у оригинала. Расплывчатые формулировки («видны несоответствия», «такие как…») БЕЗ конкретики — НЕ маркеры. В ❌-обосновании укажи номер пункта списка.
-- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ⚠️/❌.
+- Каждый ❌ и каждый ️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ⚠️/❌.
 - ✅ по сверке батчей требует цитат ОБЕИХ кодов; без кода на коробке — «сверка с коробкой не проводилась», а не «совпадает».
 - Точные цифры (штрихкод, адрес, REF) в отчёте НЕ цитируй — только наличие блоков надписей. Точные цитаты разрешены ТОЛЬКО для батч-кодов.
 - ✅ НЕ содержит оговорок со словом «однако» и перечислений дефектов; честная приписка о том, какая часть детали не оценивалась (например, без кадра против света), разрешена ТОЛЬКО отдельным предложением без «однако».
@@ -369,6 +367,10 @@ MODE_SCREENSHOT="""Определи тип изображения. Критер�
 - MESSENGER_COMPRESSED: фото с сильными артефактами сжатия (размытие, блочность, потеря деталей)
 
 Ответь СТРОГО одним словом: REAL_PHOTO, SCREENSHOT или MESSENGER_COMPRESSED."""
+
+MODE_CODECHARS="""Рассмотри батч-код на фото. Перечисли его символы ПО ПОРЯДКУ, каждый отдельно, через пробел (цифры и буквы — как видишь каждый отдельный символ).
+Ответь СТРОГО в формате:
+СИМВОЛЫ: A 1 B 2 C 3"""
 
 START_TEXT=("👋 Legit Check Perfume — разбор парфюмерии по фото на признаки несоответствия оригиналу.\n\n"
 "Как это работает:\n"
@@ -707,7 +709,6 @@ def unread_advice(s,n,advice):
         return "На этой стороне кода не видно. Осмотрите боковые грани и нижнюю клапань коробки — код обычно там. Пришлите их крупным планом."
     return advice or "Снимите при дневном свете, без вспышки."
 
-# ── Лестница подсказок по батчу (тексты утверждены) ───────────────────────
 def batch_retake(cid,s,n,step_name,obj):
     r=s.get("retakes",0)
     s["retakes"]=r+1
@@ -726,14 +727,6 @@ def models_pair(s):
     model=s.get("model") or QWEN_MODEL
     other=QWEN3_MODEL if model==QWEN_MODEL else QWEN_MODEL
     return model,other
-
-def audit_on_photo(cid,s,n,b64,code):
-    try:
-        cb64=center_crop_b64(b64,0.6)
-        return audit_code(cid,s,n,cb64,code)
-    except Exception:
-        logging.exception("audit")
-        return code
 
 def cross_batch(cid,s,n,b64):
     step=s["queue"][n-1].lower()
@@ -757,7 +750,6 @@ def cross_batch(cid,s,n,b64):
         c3n=norm_code(c3)
         confirmed=bool(c3n) and "НЕ ВИДЕН" not in (c3 or "") and (code in c3n or c3n in code)
         if confirmed:
-            code=audit_on_photo(cid,s,n,b64,code)
             return code,"fixed"
         logging.info("ROUND2_TRIGGER cid=%s n=%d reason=ocr3_not_confirmed code=%s c3=%s",cid,n,code,c3)
     elif confuz:
@@ -771,10 +763,6 @@ def cross_batch(cid,s,n,b64):
     logging.info("CROSS_BATCH cid=%s n=%d round2=none",cid,n)
     return None,"mismatch"
 
-MODE_CODEBBOX="""Посмотри на фото. Найди батч-код — короткую строку из цифр и букв (гравировка или печать). Отметь МИНИМАЛЬНУЮ область, содержащую именно символы кода; не край дна, не пальцы, не крышку. Если код не виден — ответь 0 0 0 0.
-Ответь СТРОГО одной строкой:
-ОБЛАСТЬ: x1 y1 x2 y2"""
-
 def center_crop_b64(b64,frac=0.6):
     im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
     w,h=im.size
@@ -784,184 +772,12 @@ def center_crop_b64(b64,frac=0.6):
     buf=io.BytesIO(); im.save(buf,"JPEG",quality=88)
     return base64.b64encode(buf.getvalue()).decode()
 
-MODE_CODECHARS="""Рассмотри батч-код на фото. Перечисли его символы ПО ПОРЯДКУ, каждый отдельно, через пробел (цифры и буквы — как видишь каждый отдельный символ).
-Ответь СТРОГО в формате:
-СИМВОЛЫ: A 1 B 2 C 3"""
-
 def parse_chars(res):
     line=parse(res,"СИМВОЛЫ")
     if not line:
         return ""
     toks=re.sub(r"[^A-Za-z0-9]"," ",line).split()
     return "".join(t[0].upper() for t in toks if t)
-
-MODE_ETALON="""Изображение 1: один знак батч-кода с фото. Изображение 2: эталон знака «{a}». Изображение 3: эталон знака «{b}».
-Форма знака на изображении 1 совпадает с эталоном 2 или с эталоном 3?
-Ответь СТРОГО одной цифрой: 2 или 3."""
-
-TWIN={"8":"B","0":"O"}
-
-def render_etalon(ch):
-    from PIL import ImageDraw, ImageFont as PF
-    im=Image.new("RGB",(240,240),(255,255,255))
-    d=ImageDraw.Draw(im)
-    try:
-        f=PF.truetype(FONT_PATH or "arial.ttf",180)
-    except Exception:
-        f=PF.load_default()
-    d.text((120,120),ch,font=f,fill=(0,0,0),anchor="mm")
-    buf=io.BytesIO(); im.save(buf,"JPEG",quality=90)
-    return base64.b64encode(buf.getvalue()).decode()
-
-def code_bbox_on(cb64,model):
-    res=ask_qwen([cb64],MODE_CODEBBOX,model,timeout=60,attempts=1,use_system=False,temperature=0)
-    m=re.search(r"ОБЛАСТЬ:\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)",res)
-    if not m: return None
-    x1,y1,x2,y2=[int(v) for v in m.groups()]
-    if x2<=x1 or y2<=y1: return None
-    return [x1,y1,x2,y2]
-
-def symbol_crop(cb64,box,pos,ncols,margin=1.0):
-    x1,y1,x2,y2=box
-    cw=(x2-x1)/float(ncols)
-    cx1=x1+cw*pos; cx2=cx1+cw
-    mw=(cx2-cx1)*margin
-    bx=[max(0,int(cx1-mw)),max(0,int(y1-mw)),min(1000,int(cx2+mw)),min(1000,int(y2+mw))]
-    im=Image.open(io.BytesIO(base64.b64decode(cb64))).convert("RGB")
-    w,h=im.size
-    im=im.crop((int(bx[0]/1000*w),int(bx[1]/1000*h),int(bx[2]/1000*w),int(bx[3]/1000*h)))
-    im=im.resize((max(1,im.width*4),max(1,im.height*4)),Image.LANCZOS)
-    from PIL import ImageOps
-    try: im=ImageOps.autocontrast(im,cutoff=1)
-    except Exception: pass
-    buf=io.BytesIO(); im.save(buf,"JPEG",quality=90)
-    return base64.b64encode(buf.getvalue()).decode()
-
-def classify_char(cid,s,n,sb,a,b):
-    e2=render_etalon(a); e3=render_etalon(b)
-    q=MODE_ETALON.format(a=a,b=b)
-    model,other=models_pair(s)
-    try:
-        r1=ask_qwen([sb,e2,e3],q,model,timeout=45,attempts=1,use_system=False,temperature=0)
-        r2=ask_qwen([sb,e2,e3],q,other,timeout=45,attempts=1,use_system=False,temperature=0)
-    except Exception:
-        logging.exception("classify net")
-        return None
-    def pick(r):
-        for ch in r.strip():
-            if ch in ("2","3"): return ch
-        return None
-    a1=pick(r1); a2=pick(r2)
-    logging.info("CLASSIFY cid=%s n=%d a=%s b=%s a1=%s a2=%s",cid,n,a,b,a1,a2)
-    if a1 and a1==a2:
-        return a if a1=="2" else b
-    return None
-
-def _symbol_mask(sb,ratio,invert):
-    im=Image.open(io.BytesIO(base64.b64decode(sb))).convert("L")
-    w,h=im.size
-    px=im.load()
-    vals=[px[x,y] for y in range(0,h,2) for x in range(0,w,2)]
-    if not vals: return None
-    mx=max(vals); mn=min(vals)
-    if mx-mn<20: return None
-    thr=mn+(mx-mn)*ratio
-    xs=[]; ys=[]
-    for y in range(h):
-        for x in range(w):
-            v=px[x,y]
-            if (v<thr and not invert) or (v>thr and invert):
-                xs.append(x); ys.append(y)
-    fill=len(xs)/(w*h)
-    if not xs or fill<0.15 or fill>0.85: return None
-    x1,x2=min(xs),max(xs); y1,y2=min(ys),max(ys)
-    if x2-x1<8 or y2-y1<8: return None
-    mask=Image.new("L",(w,h),0)
-    mp=mask.load()
-    for x,y in zip(xs,ys): mp[x,y]=255
-    return mask.crop((x1,y1,x2+1,y2+1)).resize((100,140),Image.NEAREST)
-
-def _edge_vote(mask):
-    px=mask.load()
-    lefts=[]
-    for y in range(28,112):
-        lx=None
-        for x in range(100):
-            if px[x,y]>127:
-                lx=x; break
-        if lx is not None: lefts.append(lx)
-    if len(lefts)<10: return None
-    m=sum(lefts)/len(lefts)
-    std=(sum((v-m)**2 for v in lefts)/len(lefts))**0.5
-    rel=std/100.0
-    if rel<0.05: return "B"
-    if rel>0.09: return "8"
-    return None
-
-def _iou_vote(mask):
-    from PIL import ImageDraw, ImageFont as PF
-    best=None; bestv=0.0
-    for ch in ("B","8"):
-        E=Image.new("L",(100,140),0)
-        d=ImageDraw.Draw(E)
-        try:
-            f=PF.truetype(FONT_PATH or "arial.ttf",120)
-        except Exception:
-            return None
-        d.text((50,70),ch,font=f,fill=255,anchor="mm")
-        ep=E.load(); mp=mask.load()
-        inter=0; union=0
-        for y in range(140):
-            for x in range(100):
-                a=mp[x,y]>127; b=ep[x,y]>127
-                if a or b: union+=1
-                if a and b: inter+=1
-        iou=inter/union if union else 0
-        if iou>bestv: bestv=iou; best=ch
-    return best
-
-def char_shape_vote(sb):
-    vb=0; v8=0
-    for ratio in (0.35,0.5,0.65):
-        for invert in (False,True):
-            mask=_symbol_mask(sb,ratio,invert)
-            if not mask: continue
-            ev=_edge_vote(mask)
-            iv=_iou_vote(mask)
-            for v in (ev,iv):
-                if v=="B": vb+=1
-                elif v=="8": v8+=1
-    logging.info("CHAR_SHAPE votes B=%d 8=%d",vb,v8)
-    if vb>=2 and vb>v8: return "B"
-    if v8>=2 and v8>vb: return "8"
-    return None
-
-def audit_code(cid,s,n,cb64,code):
-    model=s.get("model") or QWEN_MODEL
-    try:
-        box=code_bbox_on(cb64,model)
-    except Exception:
-        logging.exception("audit bbox")
-        return code
-    if not box: return code
-    fixed=code
-    budget=4
-    for pos,ch in enumerate(code):
-        if budget<=0: break
-        tw=TWIN.get(ch)
-        if not tw: continue
-        budget-=1
-        try:
-            sb=symbol_crop(cb64,box,pos,len(code))
-        except Exception:
-            continue
-        cv=char_shape_vote(sb)
-        logging.info("CVSHAPE cid=%s n=%d pos=%d ch=%s cv=%s",cid,n,pos,ch,cv)
-        if cv and cv!=ch:
-            fixed=fixed[:pos]+cv+fixed[pos+1:]
-    if fixed!=code:
-        logging.info("AUDIT cid=%s n=%d before=%s after=%s",cid,n,code,fixed)
-    return fixed
 
 def round2_crop(cid,s,n,b64,prompt,key,model,other):
     try:
@@ -984,29 +800,8 @@ def round2_crop(cid,s,n,b64,prompt,key,model,other):
     code,confuz=decide_code2([c1,c2,c3])
     logging.info("ROUND2 cid=%s n=%d c1=%s c2=%s c3=%s code=%s confuz=%s",cid,n,c1,c2,c3,code,confuz)
     if code and not confuz:
-        return audit_code(cid,s,n,cb64,code)
-    if confuz and c1 and c2:
-        pos=None
-        for i in range(min(len(c1),len(c2))):
-            if c1[i]!=c2[i]:
-                pos=i; break
-        if pos is not None:
-            a,b=c1[pos],c2[pos]
-            sb=None
-            try:
-                box=code_bbox_on(cb64,model)
-                if box:
-                    sb=symbol_crop(cb64,box,pos,max(len(c1),len(c2)))
-            except Exception:
-                sb=None
-            if sb:
-                res=classify_char(cid,s,n,sb,a,b)
-                if res:
-                    out=c1[:pos]+res+c1[pos+1:]
-                    logging.info("ROUND3 cid=%s n=%d code=%s",cid,n,out)
-                    return out
+        return code
     return None
-
 
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
@@ -1399,7 +1194,7 @@ def verify_reds(cid,s,rep,details,model):
         up=vr.upper()
         if "ОПРОВЕРГАЮ" in up:
             st_line=parse(vr,"СТАТУС")
-            newst=next((e for e in ("➖","️") if e in st_line),"⚠️")
+            newst=next((e for e in ("➖","⚠️") if e in st_line),"⚠️")
             why=parse(vr,"ПОЧЕМУ") or "видимых доказательств маркера нет"
             if newst=="➖":
                 newfirst=f"{n} ➖ {PDF_NAMES.get(n,'')}: деталь не проверяется по заявленному маркеру: {why}"
@@ -1561,7 +1356,7 @@ def do_report(cid):
     note="\nНЕ ПРОВЕРЯЕТСЯ: "+", ".join(s["cannot"]) if s["cannot"] else ""
     fn=facts_note(s)
     if s["tariff"]=="Экспресс":
-        tariff_note=("\nТАРИФ ЭКСПРЕСС: 2-4 предложения на деталь. Кроме статуса перечисли подтверждающие факты, видимые в кадре: по 01 — какие блоки надписей присутствуют на коробке (состав, адрес производителя, сайт бренда, штрихкод, знаки, объём и концентрация); НЕ цитируй точные цифры, адреса и коды, кроме батчей; по 02 — однородность стекла и жидкости, видимый градиент; по 05 — процитируй гравировку/надписи крышки; по 03 — коды батчей цитируй точно, только если уверена в каждом символе. Отсутствие любого факта — НЕ маркер и НЕ основание для ⚠️/❌. Цитируй только то, что видно в кадре.")
+        tariff_note=("\nТАРИФ ЭКСПРЕСС: 2-4 предложения на деталь. Кроме статуса перечисли подтверждающие факты, видимые в кадре: по 01 — какие блоки надписей присутствуют на коробке (состав, адрес производителя, сайт бренда, штрихкод, знаки, объём и концентрация); НЕ цитируй точные цифры, адреса и коды, кроме батчей; по 02 — однородность стекла и жидкости, видимый градиент; по 05 — процитируй гравировку/надписи крышки; по 03 — коды батчей цитируй точно, только если уверена в каждом символе. Отсутствие любого факта — НЕ маркер и НЕ основание для ⚠️/. Цитируй только то, что видно в кадре.")
     else:
         tariff_note="\nТАРИФ СТАНДАРТ: обоснования 1-2 предложения на деталь."
     model,other=models_pair(s)
@@ -1685,6 +1480,8 @@ def payment_watcher():
                 run_job(int(cid_s))
         except Exception:
             logging.exception("payment watcher jobs")
+
+S={}
 
 @bot.message_handler(commands=["start"])
 def start(m):
@@ -1868,7 +1665,6 @@ def process_image(cid,s,b64,comp):
         msg+=" Попробуйте ещё раз — у вас получится!"+retake_extra(s)
         bot.send_message(cid,msg)
         return
-    # ── строгость на входе: кросс-OCR батча ──
     step_name=s["queue"][n-1]
     try:
         if "батч" in step_name.lower():
