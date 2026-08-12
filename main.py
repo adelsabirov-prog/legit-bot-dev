@@ -79,6 +79,12 @@ CONF={"8":"B","0":"O","1":"I","5":"S","2":"Z","6":"G"}
 def canon_conf(s):
     return "".join(CONF.get(ch,ch) for ch in s)
 
+MICRO_ENABLED=os.environ.get("MICRO_ENABLED","1")=="1"
+
+MODE_MICRO=("Посмотри только на символ батч-кода на позиции {pos} слева{prev_hint}. Не думай о коде целиком. "
+"Изучи его левую вертикальную грань: она идеально прямая (характерно для буквы B) или округлая "
+"(характерно для цифры 8)? Ответь СТРОГО: B или 8.")
+
 def norm_code(x):
     return re.sub(r"[^A-Za-z0-9]","",""+(x or "")).upper()
 
@@ -803,6 +809,32 @@ def round2_crop(cid,s,n,b64,prompt,key,model,other):
         return code
     return None
 
+def micro_round(cid,s):
+    if not MICRO_ENABLED: return
+    f=s.get("facts",{})
+    bb=norm_code(f.get("batch_bottle")); bx=norm_code(f.get("batch_box"))
+    if not bb or not bx or len(bb)!=len(bx) or len(bb)<6: return
+    diff=[i for i in range(len(bb)) if bb[i]!=bx[i]]
+    if len(diff)!=1: return
+    i=diff[0]
+    if {bb[i],bx[i]}!={"B","8"}: return
+    photo=f.get("batch_bottle_photo")
+    if not photo: return
+    prev_hint=" (после символов "+", ".join(bb[:i])+")" if i>0 else ""
+    try:
+        r=ask_qwen([photo],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),QWEN3_MODEL,timeout=60,attempts=1,use_system=False,temperature=0)
+    except Exception:
+        logging.exception("micro round")
+        return
+    m=re.match(r"^(B|8)\b",r.strip().upper())
+    a=m.group(1) if m else None
+    fixed=False
+    if a and a==bx[i] and a!=bb[i]:
+        f["batch_bottle"]=bb[:i]+a+bb[i+1:]
+        fixed=True
+    s["micro_round"]={"pos":i,"answer":a,"fixed":fixed}
+    logging.info("MICRO_ROUND cid=%s pos=%d micro=%s bottle=%s box=%s fixed=%s",cid,i,a,bb,bx,fixed)
+
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
     try:
@@ -893,7 +925,7 @@ def save_case(cid,s):
         for i,b in enumerate(s["photos"]):
             with open(os.path.join(d,f"{i+1}.jpg"),"wb") as f:
                 f.write(base64.b64decode(b))
-        meta={"cid":cid,"name":s.get("name",""),"brand":s.get("brand",""),"tariff":s.get("tariff",""),"verdict":verdict_str(s["details"]),"details":s["details"],"obj":s.get("obj",""),"ff":s.get("ff",""),"model":s.get("model") or QWEN_MODEL,"ts":ts,"feedback":None,"rechecks":0,"disputed":False,"candidate":"","owner_test":is_owner(cid),"facts":s.get("facts",{})}
+        meta={"cid":cid,"name":s.get("name",""),"brand":s.get("brand",""),"tariff":s.get("tariff",""),"verdict":verdict_str(s["details"]),"details":s["details"],"obj":s.get("obj",""),"ff":s.get("ff",""),"model":s.get("model") or QWEN_MODEL,"ts":ts,"feedback":None,"rechecks":0,"disputed":False,"candidate":"","owner_test":is_owner(cid),"facts":s.get("facts",{})},"micro_round":s.get("micro_round")
         with open(os.path.join(d,"meta.json"),"w",encoding="utf-8") as f:
             json.dump(meta,f,ensure_ascii=False)
         s["case_path"]=d
@@ -1676,8 +1708,12 @@ def process_image(cid,s,b64,comp):
                 accept_step(cid,s,n,b64)
                 return
             if code:
-                s["facts"]["batch_box" if "короб" in step_name.lower() else "batch_bottle"]=code
+                is_box="короб" in step_name.lower()
+                s["facts"]["batch_box" if is_box else "batch_bottle"]=code
+                if not is_box:
+                    s["facts"]["batch_bottle_photo"]=b64
                 logging.info("BATCH_FIXED cid=%s n=%d code=%s",cid,n,code)
+                micro_round(cid,s)
             accept_step(cid,s,n,b64)
             return
         if ("короб" in step_name.lower()) or ("крышк" in step_name.lower()):
