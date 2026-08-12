@@ -7,6 +7,7 @@ from telebot import types
 from PIL import Image
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s,%(msecs)03d %(levelname)s %(message)s",datefmt="%Y-%m-%d %H:%M:%S")
+logging.getLogger("fontTools").setLevel(logging.WARNING)
 
 # ── ОКРУЖЕНИЕ (сверьте имена с Railway) ────────────────────────────────────
 TOKEN=os.environ["TG_TOKEN"]
@@ -314,7 +315,7 @@ MODE_VERIFY_GREEN="""КОНТРОЛЬНАЯ ПРОВЕРКА (поиск про�
 1) вмешательство в код; 2) несовпадение батчей при обоих видимых; 3) перекос/зазоры завальцовки; 4) кривая трубочка при кадре против света; 5) дефект полиграфии; 6) дефект стекла; 7) конфликт коробка↔флакон.
 Если нашёл — статус ⚠️ или ❌ с цитатой; если не нашёл — ✅.
 Ответь СТРОГО в формате:
-СТАТУС: ✅/⚠️/
+СТАТУС: ✅/⚠️/❌
 ЦИТАТА: [что видно и где, или «нет»]"""
 
 MODE_OCR="""Прочитай батч-код на флаконе.
@@ -819,7 +820,7 @@ def micro_round(cid,s):
     if len(diff)!=1: return
     i=diff[0]
     if {bb[i],bx[i]}!={"B","8"}: return
-    photo=f.get("batch_bottle_photo")
+    photo=s.get("batch_bottle_photo")
     if not photo: return
     prev_hint=" (после символов "+", ".join(bb[:i])+")" if i>0 else ""
     try:
@@ -1227,7 +1228,7 @@ def verify_reds(cid,s,rep,details,model):
         up=vr.upper()
         if "ОПРОВЕРГАЮ" in up:
             st_line=parse(vr,"СТАТУС")
-            newst=next((e for e in ("➖","️") if e in st_line),"⚠️")
+            newst=next((e for e in ("➖","⚠️") if e in st_line),"⚠️")
             why=parse(vr,"ПОЧЕМУ") or "видимых доказательств маркера нет"
             if newst=="➖":
                 newfirst=f"{n} ➖ {PDF_NAMES.get(n,'')}: деталь не проверяется по заявленному маркеру: {why}"
@@ -1310,7 +1311,7 @@ def do_recheck(cid,s,n,b64):
         bot.send_message(cid,BUSY_TEXT)
         return
     line=parse(rc,"СТАТУС")
-    newst=next((e for e in ("❌","⚠️","✅","➖") if e in line),"➖")
+    newst=next((e for e in ("❌","️","✅","") if e in line),"➖")
     s["details"][n]=newst
     s["rechecks"]=s.get("rechecks",0)+1
     s["stage"]="done"
@@ -1389,7 +1390,7 @@ def do_report(cid):
     note="\nНЕ ПРОВЕРЯЕТСЯ: "+", ".join(s["cannot"]) if s["cannot"] else ""
     fn=facts_note(s)
     if s["tariff"]=="Экспресс":
-        tariff_note=("\nТАРИФ ЭКСПРЕСС: 2-4 предложения на деталь. Кроме статуса перечисли подтверждающие факты, видимые в кадре: по 01 — какие блоки надписей присутствуют на коробке (состав, адрес производителя, сайт бренда, штрихкод, знаки, объём и концентрация); НЕ цитируй точные цифры, адреса и коды, кроме батчей; по 02 — однородность стекла и жидкости, видимый градиент; по 05 — процитируй гравировку/надписи крышки; по 03 — коды батчей цитируй точно, только если уверена в каждом символе. Отсутствие любого факта — НЕ маркер и НЕ основание для ⚠️/. Цитируй только то, что видно в кадре.")
+        tariff_note=("\nТАРИФ ЭКСПРЕСС: 2-4 предложения на деталь. Кроме статуса перечисли подтверждающие факты, видимые в кадре: по 01 — какие блоки надписей присутствуют на коробке (состав, адрес производителя, сайт бренда, штрихкод, знаки, объём и концентрация); НЕ цитируй точные цифры, адреса и коды, кроме батчей; по 02 — однородность стекла и жидкости, видимый градиент; по 05 — процитируй гравировку/надписи крышки; по 03 — коды батчей цитируй точно, только если уверена в каждом символе. Отсутствие любого факта — НЕ маркер и НЕ основание для ⚠️/❌. Цитируй только то, что видно в кадре.")
     else:
         tariff_note="\nТАРИФ СТАНДАРТ: обоснования 1-2 предложения на деталь."
     model,other=models_pair(s)
@@ -1712,7 +1713,7 @@ def process_image(cid,s,b64,comp):
                 is_box="короб" in step_name.lower()
                 s["facts"]["batch_box" if is_box else "batch_bottle"]=code
                 if not is_box:
-                    s["facts"]["batch_bottle_photo"]=b64
+                    s["batch_bottle_photo"]=b64
                 logging.info("BATCH_FIXED cid=%s n=%d code=%s",cid,n,code)
                 micro_round(cid,s)
             accept_step(cid,s,n,b64)
