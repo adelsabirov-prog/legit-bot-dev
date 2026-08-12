@@ -925,7 +925,7 @@ def save_case(cid,s):
         for i,b in enumerate(s["photos"]):
             with open(os.path.join(d,f"{i+1}.jpg"),"wb") as f:
                 f.write(base64.b64decode(b))
-        meta={"cid":cid,"name":s.get("name",""),"brand":s.get("brand",""),"tariff":s.get("tariff",""),"verdict":verdict_str(s["details"]),"details":s["details"],"obj":s.get("obj",""),"ff":s.get("ff",""),"model":s.get("model") or QWEN_MODEL,"ts":ts,"feedback":None,"rechecks":0,"disputed":False,"candidate":"","owner_test":is_owner(cid),"facts":s.get("facts",{})},"micro_round":s.get("micro_round")
+        meta={"cid":cid,"name":s.get("name",""),"brand":s.get("brand",""),"tariff":s.get("tariff",""),"verdict":verdict_str(s["details"]),"details":s["details"],"obj":s.get("obj",""),"ff":s.get("ff",""),"model":s.get("model") or QWEN_MODEL,"ts":ts,"feedback":None,"rechecks":0,"disputed":False,"candidate":"","owner_test":is_owner(cid),"facts":s.get("facts",{})},"micro_round":s.get("micro_round")}
         with open(os.path.join(d,"meta.json"),"w",encoding="utf-8") as f:
             json.dump(meta,f,ensure_ascii=False)
         s["case_path"]=d
