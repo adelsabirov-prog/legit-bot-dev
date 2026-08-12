@@ -857,6 +857,85 @@ def classify_char(cid,s,n,sb,a,b):
         return a if a1=="2" else b
     return None
 
+def _symbol_mask(sb,ratio,invert):
+    im=Image.open(io.BytesIO(base64.b64decode(sb))).convert("L")
+    w,h=im.size
+    px=im.load()
+    vals=[px[x,y] for y in range(0,h,2) for x in range(0,w,2)]
+    if not vals: return None
+    mx=max(vals); mn=min(vals)
+    if mx-mn<20: return None
+    thr=mn+(mx-mn)*ratio
+    xs=[]; ys=[]
+    for y in range(h):
+        for x in range(w):
+            v=px[x,y]
+            if (v<thr and not invert) or (v>thr and invert):
+                xs.append(x); ys.append(y)
+    fill=len(xs)/(w*h)
+    if not xs or fill<0.15 or fill>0.85: return None
+    x1,x2=min(xs),max(xs); y1,y2=min(ys),max(ys)
+    if x2-x1<8 or y2-y1<8: return None
+    mask=Image.new("L",(w,h),0)
+    mp=mask.load()
+    for x,y in zip(xs,ys): mp[x,y]=255
+    return mask.crop((x1,y1,x2+1,y2+1)).resize((100,140),Image.NEAREST)
+
+def _edge_vote(mask):
+    px=mask.load()
+    lefts=[]
+    for y in range(28,112):
+        lx=None
+        for x in range(100):
+            if px[x,y]>127:
+                lx=x; break
+        if lx is not None: lefts.append(lx)
+    if len(lefts)<10: return None
+    m=sum(lefts)/len(lefts)
+    std=(sum((v-m)**2 for v in lefts)/len(lefts))**0.5
+    rel=std/100.0
+    if rel<0.05: return "B"
+    if rel>0.09: return "8"
+    return None
+
+def _iou_vote(mask):
+    from PIL import ImageDraw, ImageFont as PF
+    best=None; bestv=0.0
+    for ch in ("B","8"):
+        E=Image.new("L",(100,140),0)
+        d=ImageDraw.Draw(E)
+        try:
+            f=PF.truetype(FONT_PATH or "arial.ttf",120)
+        except Exception:
+            return None
+        d.text((50,70),ch,font=f,fill=255,anchor="mm")
+        ep=E.load(); mp=mask.load()
+        inter=0; union=0
+        for y in range(140):
+            for x in range(100):
+                a=mp[x,y]>127; b=ep[x,y]>127
+                if a or b: union+=1
+                if a and b: inter+=1
+        iou=inter/union if union else 0
+        if iou>bestv: bestv=iou; best=ch
+    return best
+
+def char_shape_vote(sb):
+    vb=0; v8=0
+    for ratio in (0.35,0.5,0.65):
+        for invert in (False,True):
+            mask=_symbol_mask(sb,ratio,invert)
+            if not mask: continue
+            ev=_edge_vote(mask)
+            iv=_iou_vote(mask)
+            for v in (ev,iv):
+                if v=="B": vb+=1
+                elif v=="8": v8+=1
+    logging.info("CHAR_SHAPE votes B=%d 8=%d",vb,v8)
+    if vb>=2 and vb>v8: return "B"
+    if v8>=2 and v8>vb: return "8"
+    return None
+
 def audit_code(cid,s,n,cb64,code):
     model=s.get("model") or QWEN_MODEL
     try:
