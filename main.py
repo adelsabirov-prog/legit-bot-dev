@@ -84,9 +84,9 @@ def canon_conf(s):
 def norm_code(x):
     return re.sub(r"[^A-Za-z0-9]","",""+(x or "")).upper()
 
-def decide_code(rs):
+def decide_code2(rs):
     cs=[c for c in (norm_code(x) for x in rs) if c and "НЕ ВИДЕН" not in c]
-    if not cs: return None
+    if not cs: return None,False
     def canon(x):
         pref=[o for o in cs if len(o)>=6 and o in x]
         return min(pref,key=len) if pref else x
@@ -102,10 +102,15 @@ def decide_code(rs):
         ssum=sum(v for _,v in items)
         if ssum>=2 and ssum>bsum:
             bsum=ssum; best=items
-    if not best: return None
-    if len(best)>1: return None
+    if not best: return None,False
+    if len(best)>1: return None,True
     k,v=best[0]
-    return k if v>=2 else None
+    if v>=2: return k,False
+    return None,False
+
+def decide_code(rs):
+    code,_=decide_code2(rs)
+    return code
 
 # ── Каталог (нормализация имени) ──────────────────────────────────────────
 def norm_name(t):
@@ -736,13 +741,60 @@ def cross_batch(cid,s,n,b64):
         return None,"error"
     c1=parse(r1,key).strip().upper(); c2=parse(r2,key).strip().upper()
     c3=ocr3_read(b64)
-    code=decide_code([c1,c2,c3])
+    code,confuz=decide_code2([c1,c2,c3])
     nobody=(not c1 or "НЕ ВИДЕН" in c1) and (not c2 or "НЕ ВИДЕН" in c2) and not code
     verdict="fixed" if code else ("fail" if nobody else "mismatch")
     logging.info("CROSS_BATCH cid=%s n=%d m1=%s m2=%s c1=%s c2=%s c3=%s code=%s verdict=%s",cid,n,model,other,c1,c2,c3,code,verdict)
     if code:
-        return code,"fixed"
-    return None,verdict
+        c3n=norm_code(c3)
+        confirmed=bool(c3n) and "НЕ ВИДЕН" not in (c3 or "") and (code in c3n or c3n in code)
+        if confirmed:
+            return code,"fixed"
+        logging.info("ROUND2_TRIGGER cid=%s n=%d reason=ocr3_not_confirmed code=%s c3=%s",cid,n,code,c3)
+    elif confuz:
+        logging.info("ROUND2_TRIGGER cid=%s n=%d reason=confuz c1=%s c2=%s c3=%s",cid,n,c1,c2,c3)
+    else:
+        return None,verdict
+    code2=round2_crop(cid,s,n,b64,prompt,key,model,other)
+    if code2:
+        logging.info("CROSS_BATCH cid=%s n=%d round2=fixed code=%s",cid,n,code2)
+        return code2,"fixed"
+    logging.info("CROSS_BATCH cid=%s n=%d round2=none",cid,n)
+    return None,"mismatch"
+
+def round2_crop(cid,s,n,b64,prompt,key,model,other):
+    try:
+        res=ask_qwen([b64],MODE_BBOX.format(name=s["name"] or "?",n=1,nums="03"),model,timeout=60,attempts=1,temperature=0)
+    except Exception:
+        logging.exception("round2 bbox")
+        return None
+    m=re.search(r"03\s*:\s*ФОТО:\s*(\d+)\s*ОБЛАСТЬ:\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)",res)
+    if not m:
+        return None
+    try:
+        cb64=crop_b64(b64,[int(x) for x in m.groups()[1:]])
+    except Exception:
+        logging.exception("round2 crop")
+        return None
+    try:
+        chk=ask_qwen([cb64],MODE_FRAG.format(q=FRAG_PROBES.get("03","")),model,timeout=30,attempts=1,use_system=False,temperature=0)
+        if not chk.strip().lower().startswith("да"):
+            logging.info("ROUND2_FRAG_REJECT cid=%s n=%d",cid,n)
+            return None
+    except Exception:
+        logging.exception("round2 frag")
+        return None
+    try:
+        r1=ask_qwen([cb64],prompt,model,timeout=60,attempts=1,use_system=False,temperature=0)
+        r2=ask_qwen([cb64],prompt,other,timeout=60,attempts=1,use_system=False,temperature=0)
+    except Exception:
+        logging.exception("round2 read")
+        return None
+    c1=parse(r1,key).strip().upper(); c2=parse(r2,key).strip().upper()
+    c3=ocr3_read(cb64)
+    code,confuz=decide_code2([c1,c2,c3])
+    logging.info("ROUND2 cid=%s n=%d c1=%s c2=%s c3=%s code=%s confuz=%s",cid,n,c1,c2,c3,code,confuz)
+    return code if (code and not confuz) else None
 
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
