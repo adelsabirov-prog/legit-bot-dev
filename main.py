@@ -727,6 +727,14 @@ def models_pair(s):
     other=QWEN3_MODEL if model==QWEN_MODEL else QWEN_MODEL
     return model,other
 
+def audit_on_photo(cid,s,n,b64,code):
+    try:
+        cb64=center_crop_b64(b64,0.6)
+        return audit_code(cid,s,n,cb64,code)
+    except Exception:
+        logging.exception("audit")
+        return code
+
 def cross_batch(cid,s,n,b64):
     step=s["queue"][n-1].lower()
     is_box="короб" in step
@@ -749,6 +757,7 @@ def cross_batch(cid,s,n,b64):
         c3n=norm_code(c3)
         confirmed=bool(c3n) and "НЕ ВИДЕН" not in (c3 or "") and (code in c3n or c3n in code)
         if confirmed:
+            code=audit_on_photo(cid,s,n,b64,code)
             return code,"fixed"
         logging.info("ROUND2_TRIGGER cid=%s n=%d reason=ocr3_not_confirmed code=%s c3=%s",cid,n,code,c3)
     elif confuz:
@@ -786,89 +795,100 @@ def parse_chars(res):
     toks=re.sub(r"[^A-Za-z0-9]"," ",line).split()
     return "".join(t[0].upper() for t in toks if t)
 
-MODE_CHARQ="""Посмотри на увеличенный фрагмент: на нём ОДИН знак батч-кода.
-Этот знак — либо «{a}», либо «{b}». Всмотрись в форму знака и ответь СТРОГО одним символом."""
+MODE_ETALON="""Изображение 1: один знак батч-кода с фото. Изображение 2: эталон знака «{a}». Изображение 3: эталон знака «{b}».
+Форма знака на изображении 1 совпадает с эталоном 2 или с эталоном 3?
+Ответь СТРОГО одной цифрой: 2 или 3."""
 
-def enhance_b64(b64):
-    from PIL import ImageOps
-    im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+TWIN={"8":"B","0":"O"}
+
+def render_etalon(ch):
+    from PIL import ImageDraw, ImageFont as PF
+    im=Image.new("RGB",(240,240),(255,255,255))
+    d=ImageDraw.Draw(im)
     try:
-        im=ImageOps.autocontrast(im,cutoff=1)
+        f=PF.truetype(FONT_PATH or "arial.ttf",180)
     except Exception:
-        pass
+        f=PF.load_default()
+    d.text((120,120),ch,font=f,fill=(0,0,0),anchor="mm")
     buf=io.BytesIO(); im.save(buf,"JPEG",quality=90)
     return base64.b64encode(buf.getvalue()).decode()
 
-def crop_exact_b64(b64,box):
-    im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
-    w,h=im.size
+def code_bbox_on(cb64,model):
+    res=ask_qwen([cb64],MODE_CODEBBOX,model,timeout=60,attempts=1,use_system=False,temperature=0)
+    m=re.search(r"ОБЛАСТЬ:\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)",res)
+    if not m: return None
+    x1,y1,x2,y2=[int(v) for v in m.groups()]
+    if x2<=x1 or y2<=y1: return None
+    return [x1,y1,x2,y2]
+
+def symbol_crop(cb64,box,pos,ncols,margin=1.0):
     x1,y1,x2,y2=box
-    x1=int(x1/1000*w); x2=int(x2/1000*w); y1=int(y1/1000*h); y2=int(y2/1000*h)
-    im=im.crop((max(0,x1),max(0,y1),min(w,x2),min(h,y2)))
+    cw=(x2-x1)/float(ncols)
+    cx1=x1+cw*pos; cx2=cx1+cw
+    mw=(cx2-cx1)*margin
+    bx=[max(0,int(cx1-mw)),max(0,int(y1-mw)),min(1000,int(cx2+mw)),min(1000,int(y2+mw))]
+    im=Image.open(io.BytesIO(base64.b64decode(cb64))).convert("RGB")
+    w,h=im.size
+    im=im.crop((int(bx[0]/1000*w),int(bx[1]/1000*h),int(bx[2]/1000*w),int(bx[3]/1000*h)))
+    im=im.resize((max(1,im.width*4),max(1,im.height*4)),Image.LANCZOS)
+    from PIL import ImageOps
+    try: im=ImageOps.autocontrast(im,cutoff=1)
+    except Exception: pass
     buf=io.BytesIO(); im.save(buf,"JPEG",quality=90)
     return base64.b64encode(buf.getvalue()).decode()
 
-def round3_char(cid,s,n,cb64,c1,c2):
-    L=min(len(c1),len(c2))
-    pos=None
-    for i in range(L):
-        if c1[i]!=c2[i]:
-            pos=i; break
-    if pos is None: return None
-    a,b=c1[pos],c2[pos]
-    try:
-        res=ask_qwen([cb64],MODE_CODEBBOX,s.get("model") or QWEN_MODEL,timeout=60,attempts=1,use_system=False,temperature=0)
-        m=re.search(r"ОБЛАСТЬ:\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)",res)
-        if not m: return None
-        x1,y1,x2,y2=[int(v) for v in m.groups()]
-    except Exception:
-        logging.exception("round3 bbox")
-        return None
-    cw=(x2-x1)/float(max(len(c1),len(c2)))
-    cx1=x1+cw*pos; cx2=cx1+cw
+def classify_char(cid,s,n,sb,a,b):
+    e2=render_etalon(a); e3=render_etalon(b)
+    q=MODE_ETALON.format(a=a,b=b)
     model,other=models_pair(s)
-    for att,margin,temp in ((0,1.5,0),(1,2.0,0.3),(2,2.5,0.5)):
-        mw=(cx2-cx1)*margin
-        bx=[max(0,int(cx1-mw)),max(0,int(y1-mw)),min(1000,int(cx2+mw)),min(1000,int(y2+mw))]
-        try:
-            sb=enhance_b64(crop_exact_b64(cb64,bx))
-        except Exception:
-            logging.exception("round3 crop")
-            continue
-        try:
-            q=MODE_CHARQ.format(a=a,b=b)
-            r1=ask_qwen([sb],q,model,timeout=45,attempts=1,use_system=False,temperature=temp)
-            r2=ask_qwen([sb],q,other,timeout=45,attempts=1,use_system=False,temperature=temp)
-        except Exception:
-            logging.exception("round3 ask")
-            continue
-        a1=next((ch for ch in r1.strip().upper() if ch in (a,b)),None)
-        a2=next((ch for ch in r2.strip().upper() if ch in (a,b)),None)
-        logging.info("ROUND3_ATTEMPT cid=%s n=%d att=%d a1=%s a2=%s",cid,n,att,a1,a2)
-        if a1 and a1==a2:
-            return c1[:pos]+a1+c1[pos+1:]
+    try:
+        r1=ask_qwen([sb,e2,e3],q,model,timeout=45,attempts=1,use_system=False,temperature=0)
+        r2=ask_qwen([sb,e2,e3],q,other,timeout=45,attempts=1,use_system=False,temperature=0)
+    except Exception:
+        logging.exception("classify net")
+        return None
+    def pick(r):
+        for ch in r.strip():
+            if ch in ("2","3"): return ch
+        return None
+    a1=pick(r1); a2=pick(r2)
+    logging.info("CLASSIFY cid=%s n=%d a=%s b=%s a1=%s a2=%s",cid,n,a,b,a1,a2)
+    if a1 and a1==a2:
+        return a if a1=="2" else b
     return None
 
-def round2_crop(cid,s,n,b64,prompt,key,model,other):
-    cb64=None
+def audit_code(cid,s,n,cb64,code):
+    model=s.get("model") or QWEN_MODEL
     try:
-        res=ask_qwen([b64],MODE_CODEBBOX,model,timeout=60,attempts=1,use_system=False,temperature=0)
-        m=re.search(r"ОБЛАСТЬ:\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)",res)
-        if m:
-            x1,y1,x2,y2=[int(v) for v in m.groups()]
-            area=(x2-x1)*(y2-y1)
-            if x2>x1 and y2>y1 and 20000<=area<=950000:
-                cb64=crop_b64(b64,[x1,y1,x2,y2])
+        box=code_bbox_on(cb64,model)
     except Exception:
-        logging.exception("round2 bbox")
-    if not cb64:
+        logging.exception("audit bbox")
+        return code
+    if not box: return code
+    fixed=code
+    budget=4
+    for pos,ch in enumerate(code):
+        if budget<=0: break
+        tw=TWIN.get(ch)
+        if not tw: continue
+        budget-=1
         try:
-            cb64=center_crop_b64(b64,0.6)
-            logging.info("ROUND2_CENTER_FALLBACK cid=%s n=%d",cid,n)
+            sb=symbol_crop(cb64,box,pos,len(code))
         except Exception:
-            logging.exception("round2 center crop")
-            return None
-    cb64=enhance_b64(cb64)
+            continue
+        res=classify_char(cid,s,n,sb,ch,tw)
+        if res and res!=ch:
+            fixed=fixed[:pos]+res+fixed[pos+1:]
+    if fixed!=code:
+        logging.info("AUDIT cid=%s n=%d before=%s after=%s",cid,n,code,fixed)
+    return fixed
+
+def round2_crop(cid,s,n,b64,prompt,key,model,other):
+    try:
+        cb64=center_crop_b64(b64,0.6)
+    except Exception:
+        logging.exception("round2 center crop")
+        return None
     try:
         bot.send_photo(OWNER_ID,io.BytesIO(base64.b64decode(cb64)),caption=f"ROUND2 CROP n={n}")
     except Exception:
@@ -884,13 +904,29 @@ def round2_crop(cid,s,n,b64,prompt,key,model,other):
     code,confuz=decide_code2([c1,c2,c3])
     logging.info("ROUND2 cid=%s n=%d c1=%s c2=%s c3=%s code=%s confuz=%s",cid,n,c1,c2,c3,code,confuz)
     if code and not confuz:
-        return code
+        return audit_code(cid,s,n,cb64,code)
     if confuz and c1 and c2:
-        code3=round3_char(cid,s,n,cb64,c1,c2)
-        if code3:
-            logging.info("ROUND3 cid=%s n=%d code=%s",cid,n,code3)
-            return code3
+        pos=None
+        for i in range(min(len(c1),len(c2))):
+            if c1[i]!=c2[i]:
+                pos=i; break
+        if pos is not None:
+            a,b=c1[pos],c2[pos]
+            sb=None
+            try:
+                box=code_bbox_on(cb64,model)
+                if box:
+                    sb=symbol_crop(cb64,box,pos,max(len(c1),len(c2)))
+            except Exception:
+                sb=None
+            if sb:
+                res=classify_char(cid,s,n,sb,a,b)
+                if res:
+                    out=c1[:pos]+res+c1[pos+1:]
+                    logging.info("ROUND3 cid=%s n=%d code=%s",cid,n,out)
+                    return out
     return None
+
 
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
