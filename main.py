@@ -786,6 +786,69 @@ def parse_chars(res):
     toks=re.sub(r"[^A-Za-z0-9]"," ",line).split()
     return "".join(t[0].upper() for t in toks if t)
 
+MODE_CHARQ="""Посмотри на увеличенный фрагмент: на нём ОДИН знак батч-кода.
+Этот знак — либо «{a}», либо «{b}». Всмотрись в форму знака и ответь СТРОГО одним символом."""
+
+def enhance_b64(b64):
+    from PIL import ImageOps
+    im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+    try:
+        im=ImageOps.autocontrast(im,cutoff=1)
+    except Exception:
+        pass
+    buf=io.BytesIO(); im.save(buf,"JPEG",quality=90)
+    return base64.b64encode(buf.getvalue()).decode()
+
+def crop_exact_b64(b64,box):
+    im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+    w,h=im.size
+    x1,y1,x2,y2=box
+    x1=int(x1/1000*w); x2=int(x2/1000*w); y1=int(y1/1000*h); y2=int(y2/1000*h)
+    im=im.crop((max(0,x1),max(0,y1),min(w,x2),min(h,y2)))
+    buf=io.BytesIO(); im.save(buf,"JPEG",quality=90)
+    return base64.b64encode(buf.getvalue()).decode()
+
+def round3_char(cid,s,n,cb64,c1,c2):
+    L=min(len(c1),len(c2))
+    pos=None
+    for i in range(L):
+        if c1[i]!=c2[i]:
+            pos=i; break
+    if pos is None: return None
+    a,b=c1[pos],c2[pos]
+    try:
+        res=ask_qwen([cb64],MODE_CODEBBOX,s.get("model") or QWEN_MODEL,timeout=60,attempts=1,use_system=False,temperature=0)
+        m=re.search(r"ОБЛАСТЬ:\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)",res)
+        if not m: return None
+        x1,y1,x2,y2=[int(v) for v in m.groups()]
+    except Exception:
+        logging.exception("round3 bbox")
+        return None
+    cw=(x2-x1)/float(max(len(c1),len(c2)))
+    cx1=x1+cw*pos; cx2=cx1+cw
+    model,other=models_pair(s)
+    for att,margin,temp in ((0,1.5,0),(1,2.0,0.3),(2,2.5,0.5)):
+        mw=(cx2-cx1)*margin
+        bx=[max(0,int(cx1-mw)),max(0,int(y1-mw)),min(1000,int(cx2+mw)),min(1000,int(y2+mw))]
+        try:
+            sb=enhance_b64(crop_exact_b64(cb64,bx))
+        except Exception:
+            logging.exception("round3 crop")
+            continue
+        try:
+            q=MODE_CHARQ.format(a=a,b=b)
+            r1=ask_qwen([sb],q,model,timeout=45,attempts=1,use_system=False,temperature=temp)
+            r2=ask_qwen([sb],q,other,timeout=45,attempts=1,use_system=False,temperature=temp)
+        except Exception:
+            logging.exception("round3 ask")
+            continue
+        a1=next((ch for ch in r1.strip().upper() if ch in (a,b)),None)
+        a2=next((ch for ch in r2.strip().upper() if ch in (a,b)),None)
+        logging.info("ROUND3_ATTEMPT cid=%s n=%d att=%d a1=%s a2=%s",cid,n,att,a1,a2)
+        if a1 and a1==a2:
+            return c1[:pos]+a1+c1[pos+1:]
+    return None
+
 def round2_crop(cid,s,n,b64,prompt,key,model,other):
     cb64=None
     try:
@@ -805,6 +868,7 @@ def round2_crop(cid,s,n,b64,prompt,key,model,other):
         except Exception:
             logging.exception("round2 center crop")
             return None
+    cb64=enhance_b64(cb64)
     try:
         bot.send_photo(OWNER_ID,io.BytesIO(base64.b64decode(cb64)),caption=f"ROUND2 CROP n={n}")
     except Exception:
@@ -819,7 +883,14 @@ def round2_crop(cid,s,n,b64,prompt,key,model,other):
     c3=ocr3_read(cb64)
     code,confuz=decide_code2([c1,c2,c3])
     logging.info("ROUND2 cid=%s n=%d c1=%s c2=%s c3=%s code=%s confuz=%s",cid,n,c1,c2,c3,code,confuz)
-    return code if (code and not confuz) else None
+    if code and not confuz:
+        return code
+    if confuz and c1 and c2:
+        code3=round3_char(cid,s,n,cb64,c1,c2)
+        if code3:
+            logging.info("ROUND3 cid=%s n=%d code=%s",cid,n,code3)
+            return code3
+    return None
 
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
