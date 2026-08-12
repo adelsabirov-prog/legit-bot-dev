@@ -876,9 +876,10 @@ def audit_code(cid,s,n,cb64,code):
             sb=symbol_crop(cb64,box,pos,len(code))
         except Exception:
             continue
-        res=classify_char(cid,s,n,sb,ch,tw)
-        if res and res!=ch:
-            fixed=fixed[:pos]+res+fixed[pos+1:]
+        cv=char_shape_vote(sb)
+        logging.info("CVSHAPE cid=%s n=%d pos=%d ch=%s cv=%s",cid,n,pos,ch,cv)
+        if cv and cv!=ch:
+            fixed=fixed[:pos]+cv+fixed[pos+1:]
     if fixed!=code:
         logging.info("AUDIT cid=%s n=%d before=%s after=%s",cid,n,code,fixed)
     return fixed
