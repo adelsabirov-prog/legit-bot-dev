@@ -76,6 +76,11 @@ def ocr3_read(b64):
         logging.exception("ocr3 read")
         return None
 
+CONF={"8":"B","0":"O","1":"I","5":"S","2":"Z","6":"G"}
+
+def canon_conf(s):
+    return "".join(CONF.get(ch,ch) for ch in s)
+
 def norm_code(x):
     return re.sub(r"[^A-Za-z0-9]","",""+(x or "")).upper()
 
@@ -83,14 +88,24 @@ def decide_code(rs):
     cs=[c for c in (norm_code(x) for x in rs) if c and "НЕ ВИДЕН" not in c]
     if not cs: return None
     def canon(x):
-        pref=[o for o in cs if len(o)>=6 and x.startswith(o)]
+        pref=[o for o in cs if len(o)>=6 and o in x]
         return min(pref,key=len) if pref else x
     votes={}
     for c in cs:
         k=canon(c)
         votes[k]=votes.get(k,0)+1
-    best=max(votes,key=votes.get)
-    return best if votes[best]>=2 else None
+    groups={}
+    for k,v in votes.items():
+        groups.setdefault(canon_conf(k),[]).append((k,v))
+    best=None; bsum=0
+    for g,items in groups.items():
+        ssum=sum(v for _,v in items)
+        if ssum>=2 and ssum>bsum:
+            bsum=ssum; best=items
+    if not best: return None
+    if len(best)>1: return None
+    k,v=best[0]
+    return k if v>=2 else None
 
 # ── Каталог (нормализация имени) ──────────────────────────────────────────
 def norm_name(t):
@@ -258,9 +273,9 @@ TIER A (ур.2, всегда активен):
 Пример Г: код на флаконе читается, а кода на коробке в кадре нет → по 03 пиши: код на флаконе читается (цитата); сверка с коробкой не проводилась. НЕ пиши «совпадает».
 Пример Д: крышка лежит отдельно от флакона → по 05 оценивай форму, материал, гравировку; про посадку НЕ пиши.
 
-Всё вне списка (целлофан, цвет жидкости, уровень наполнения, «магнит крышки», отсутствие вкладышей, потёртости) — НЕ ❌, максимум ️ с конкретикой. Не выдумывай «обязательные элементы» бренда вне списка. 🔴 — только при 2+ ❌ из списка; ровно 1 ❌ — ⚠️. Деталь не видна или не применима (трубочка у роликового флакона) — «➖ не проверяется», никогда ✅. Форматы батчей по рынкам различаются — сами по себе НЕ маркеры. Нет кадра против света — маркер по трубочке не применяется.
+Всё вне списка (целлофан, цвет жидкости, уровень наполнения, «магнит крышки», отсутствие вкладышей, потёртости) — НЕ ❌, максимум ️ с конкретикой. Не выдумывай «обязательные элементы» бренда вне списка. 🔴 — только при 2+ ❌ из списка; ровно 1 ❌ — ️. Деталь не видна или не применима (трубочка у роликового флакона) — «➖ не проверяется», никогда ✅. Форматы батчей по рынкам различаются — сами по себе НЕ маркеры. Нет кадра против света — маркер по трубочке не применяется.
 - Батч нечитаем из-за бликов или тусклой гравировки — «➖ не проверяется»; НЕ интерпретируй нечитаемость как вмешательство в код.
-- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ️/❌.
+- Каждый ❌ и каждый ⚠️ обязан содержать цитату из кадра: процитируй читаемый текст («батч читается как 45L310») или опиши видимый дефект с привязкой к месту («зазор между кольцом и стеклом справа»). Без цитаты — ✅ или ➖, никогда ⚠️/❌.
 - ✅ НЕ содержит оговорок со словом «однако»; честная приписка, какая часть детали не оценивалась, разрешена отдельным предложением без «однако».
 - ➖ НЕ содержит оценок: деталь видна в кадре — ставь ✅/⚠️/❌ с обоснованием; видна частично — оценивай то, что видно, и укажи, какая часть не оценивалась; ➖ — ТОЛЬКО если деталь не видна или не применима, без выводов о её состоянии.
 - Строка «совпадают» по батчам ЗАПРЕЩЕНА, если оба кода не процитированы конкретными символами. Фразу «точная цитата не приводится» в отчёт НЕ вставляй.
@@ -280,7 +295,7 @@ MODE_VERIFY="""КОНТРОЛЬНАЯ ПРОВЕРКА (адверсариаль
 Ответь СТРОГО в формате:
 ПРОБЫ: [по каждой пробе: да/нет/не вижу — через ;]
 ВЕРДИКТ: ПОДТВЕРЖДАЮ или ОПРОВЕРГАЮ
-СТАТУС: ❌/️/
+СТАТУС: ❌/⚠️/➖
 ПОЧЕМУ: одно предложение."""
 
 MODE_VERIFY_GREEN="""КОНТРОЛЬНАЯ ПРОВЕРКА (поиск пропущенного). Продукт: «{name}».
@@ -691,12 +706,14 @@ def unread_advice(s,n,advice):
 def batch_retake(cid,s,n,step_name,obj):
     r=s.get("retakes",0)
     s["retakes"]=r+1
-    if r==0:
-        msg=f"📥 Шаг {n}: код пока не читается. Переснимите макро: Код может быть прозрачным и малозаметным — посмотрите дно на свету. Если код прозрачный и не виден — положите флакон на тёмную бумагу и снимите дно на её фоне."
-        msg+="\nПопробуйте ещё раз — у вас получится!"
+    is_box="короб" in step_name.lower()
+    if r==0 and not is_box:
+        advice="Код может быть прозрачным и малозаметным — посмотрите дно на свету. Если код прозрачный и не виден — положите флакон на тёмную бумагу и снимите дно на её фоне."
     else:
-        msg=f"📥 Шаг {n}: код пока не читается. Переснимите макро: "+hint_for(step_name,s.get("ff","default"),obj)
-        msg+="\nПопробуйте ещё раз — у вас получится!"
+        advice=hint_for(step_name,s.get("ff","default"),obj)
+    msg=f"📥 Шаг {n}: код пока не читается. Переснимите макро: {advice}"
+    msg+="\nПопробуйте ещё раз — у вас получится!"
+    if r>=1:
         msg+="\nЕсли не получается — напишите «нет», и эта деталь не будет разбираться."
     bot.send_message(cid,msg)
 
@@ -716,11 +733,8 @@ def cross_batch(cid,s,n,b64):
         r2=ask_qwen([b64],prompt,other,timeout=60,attempts=1,use_system=False,temperature=0)
     except Exception:
         logging.exception("cross_batch net")
-        return None,"fail"
+        return None,"error"
     c1=parse(r1,key).strip().upper(); c2=parse(r2,key).strip().upper()
-    if not c1 or not c2 or "НЕ ВИДЕН" in c1 or "НЕ ВИДЕН" in c2:
-        logging.info("CROSS_BATCH cid=%s n=%d m1=%s m2=%s c1=%s c2=%s c3=- code=- verdict=fail",cid,n,model,other,c1,c2)
-        return None,"fail"
     c3=ocr3_read(b64)
     code=decide_code([c1,c2,c3])
     nobody=(not c1 or "НЕ ВИДЕН" in c1) and (not c2 or "НЕ ВИДЕН" in c2) and not code
@@ -749,7 +763,7 @@ def parse_details(rep):
     for line in rep.splitlines():
         m=re.match(r'^(0[1-5])\b',line.strip())
         if not m: continue
-        st=next((e for e in ("❌","️","➖","✅") if e in line),None)
+        st=next((e for e in ("❌","⚠️","➖","✅") if e in line),None)
         if st: d[m.group(1)]=st
     return d
 
@@ -988,7 +1002,7 @@ def kb_obj():
 def kb_report(s,with_fb=True):
     kb=types.InlineKeyboardMarkup()
     for n in ("01","02","03","04","05"):
-        if s["details"].get(n) in ("⚠️","","➖"):
+        if s["details"].get(n) in ("⚠️","❌","➖"):
             kb.add(types.InlineKeyboardButton(f"🔁 Перепроверить {n} · {PDF_NAMES[n]}",callback_data="rc_"+n))
     if with_fb:
         kb.add(types.InlineKeyboardButton("👍 Полезно",callback_data="fb_up"),types.InlineKeyboardButton("👎 Не помогло",callback_data="fb_down"))
@@ -1204,7 +1218,7 @@ def do_recheck(cid,s,n,b64):
         bot.send_message(cid,BUSY_TEXT)
         return
     line=parse(rc,"СТАТУС")
-    newst=next((e for e in ("❌","️","✅","") if e in line),"➖")
+    newst=next((e for e in ("❌","⚠️","✅","➖") if e in line),"➖")
     s["details"][n]=newst
     s["rechecks"]=s.get("rechecks",0)+1
     s["stage"]="done"
@@ -1231,6 +1245,44 @@ def facts_note(s):
     if f.get("batch_bottle") and f.get("batch_box"):
         note+=" Коды флакона и коробки "+("совпадают." if f["batch_bottle"]==f["batch_box"] else "НЕ совпадают — оформи по детали 03 как несовпадение (п.2).")
     return note
+
+def facts_lines(s):
+    f=s.get("facts",{})
+    out={"01":[],"03":[],"05":[]}
+    p1=[(k.lower(),f[k]) for k in ("ОБЪЁМ","КОНЦЕНТРАЦИЯ","СТРАНА") if f.get(k)]
+    if p1:
+        out["01"].append("Фиксированные данные: "+"; ".join(k+" — "+v for k,v in p1)+".")
+    bb=f.get("batch_bottle"); bx=f.get("batch_box")
+    if bb or bx:
+        t=[]
+        if bb: t.append("код флакона — "+bb)
+        if bx: t.append("код коробки — "+bx)
+        line="Фиксированные данные: "+"; ".join(t)
+        if bb and bx:
+            line+="; коды совпадают." if bb==bx else "; коды не совпадают."
+        elif bb:
+            line+=". Сверка с коробкой не проводилась."
+        else:
+            line+=". Сверка с флаконом не проводилась."
+        out["03"].append(line)
+    if f.get("ГРАВИРОВКА КРЫШКИ"):
+        out["05"].append("Фиксированные данные: гравировка крышки — «"+f["ГРАВИРОВКА КРЫШКИ"]+"».")
+    return out
+
+def append_to_detail(rep,n,lines):
+    if not lines: return rep
+    ls=rep.split("\n")
+    start=None
+    for i,l in enumerate(ls):
+        if re.match(r"^\s*"+n+r"\b",l):
+            start=i; break
+    if start is None: return rep
+    end=len(ls)
+    for j in range(start+1,len(ls)):
+        if re.match(r"^\s*0[1-5]\b",ls[j]) or ls[j].strip().startswith(TAIL_MARKERS):
+            end=j; break
+    ls[end:end]=lines
+    return "\n".join(ls)
 
 def do_report(cid):
     s=st(cid)
@@ -1293,6 +1345,9 @@ def do_report(cid):
     m=re.search(r"(?m)^(0[1-5])\b",rep)
     body=rep[m.start():] if m else rep
     rep=head+"\n"+note_l+"\n\n"+body
+    fl=facts_lines(s)
+    for n in ("01","03","05"):
+        rep=append_to_detail(rep,n,fl.get(n,[]))
     if s.get("obj")=="bottle":
         marker="Аромат и состав"
         if marker in rep:
