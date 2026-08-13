@@ -855,35 +855,39 @@ def micro_round(cid,s):
     logging.info("MICRO_ROUND cid=%s pos=%d micro=%s bottle=%s box=%s fixed=%s",cid,i,a,bb,bx,fixed)
 
 def micro_audit(cid,s):
+    from concurrent.futures import ThreadPoolExecutor
     if not MICRO_ENABLED: return None
     f=s.get("facts",{})
     bb=norm_code(f.get("batch_bottle"))
     if not bb or len(bb)<6: return None
     photo=s.get("batch_bottle_photo")
     if not photo: return None
-    disputes=[]
-    audited=0
-    for i,ch in enumerate(bb):
-        if ch not in ("8","B") or audited>=3: continue
-        audited+=1
+    poslist=[i for i,ch in enumerate(bb) if ch in ("8","B")][:3]
+    if not poslist: return None
+    def vote(i):
         prev_hint=" (после символов "+", ".join(bb[:i])+")" if i>0 else ""
-        votes=[]
-        for _ in range(3):
+        def one(_):
             try:
-                r=ask_qwen([photo],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),QWEN3_MODEL,timeout=60,attempts=1,use_system=False,temperature=0.7)
+                r=ask_qwen([photo],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),QWEN3_MODEL,timeout=30,attempts=1,use_system=False,temperature=0.7)
             except Exception:
                 logging.exception("micro audit")
-                continue
+                return None
             m=re.match(r"^(B|8)\b",r.strip().upper())
-            if m: votes.append(m.group(1))
+            return m.group(1) if m else None
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            vs=[v for v in ex.map(one,range(3)) if v]
         maj=None
         for v in ("B","8"):
-            if votes.count(v)>=2: maj=v
-        logging.info("MICRO_AUDIT cid=%s pos=%d was=%s votes=%s maj=%s",cid,i,ch,votes,maj)
-        if maj and maj!=ch:
-            disputes.append((i,ch,maj))
-    s["micro_audit"]={"audited":audited,"disputes":len(disputes)}
-    return disputes if disputes else None
+            if vs.count(v)>=2: maj=v
+        logging.info("MICRO_AUDIT cid=%s pos=%d was=%s votes=%s maj=%s",cid,i,bb[i],vs,maj)
+        return (i,bb[i],maj) if (maj and maj!=bb[i]) else None
+    disputes=[]
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for res in ex.map(vote,poslist):
+            if res: disputes.append(res)
+    s["micro_audit"]={"audited":len(poslist),"disputes":len(disputes)}
+    return disputes or None
+
 
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
