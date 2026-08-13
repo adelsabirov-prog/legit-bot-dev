@@ -1750,31 +1750,6 @@ def process_image(cid,s,b64,comp):
     step_name=s["queue"][n-1]
     try:
         if "батч" in step_name.lower():
-            s["last_batch_b64"]=b64
-            if s.get("retakes",0)>0 and "короб" not in step_name.lower() and s.get("batch_photos"):
-                old_photo=s["batch_photos"][0]
-                try:
-                    code1,stt1=cross_batch(cid,s,n,old_photo)
-                    code2,stt2=cross_batch(cid,s,n,b64)
-                    logging.info("BATCH_ARBITR cid=%s n=%d c1=%s c2=%s",cid,n,code1,code2)
-                    if code1 and code2 and code1==code2:
-                        s["facts"]["batch_bottle"]=code1
-                        s["batch_bottle_photo"]=b64
-                        disputes=micro_audit(cid,s)
-                        first=s.get("audit_first") or []
-                        agree=sorted({(i,maj) for (i,ch,maj) in disputes for (fi,fch,fmaj) in first if fi==i and fmaj==maj})
-                        if agree:
-                            fixed_code=code1
-                            for i,maj in agree:
-                                if 0<=i<len(fixed_code):
-                                    fixed_code=fixed_code[:i]+maj+fixed_code[i+1:]
-                            logging.info("BATCH_ARBITR_AUDIT cid=%s n=%d code=%s fixed=%s agree=%s",cid,n,code1,fixed_code,agree)
-                            s["facts"]["batch_bottle"]=fixed_code
-                        micro_round(cid,s)
-                        accept_step(cid,s,n,b64)
-                        return
-                except Exception:
-                    logging.exception("batch arbitr")
             code,stt=cross_batch(cid,s,n,b64)
             if stt in ("mismatch","fail"):
                 batch_retake(cid,s,n,step_name,obj)
@@ -1785,16 +1760,36 @@ def process_image(cid,s,b64,comp):
             if code:
                 is_box="короб" in step_name.lower()
                 if not is_box:
-                    s["facts"]["batch_bottle"]=code
-                    s["batch_bottle_photo"]=b64
-                    s.setdefault("batch_photos",[]).append(b64)
                     disputes=micro_audit(cid,s)
-                    s["audit_first"]=disputes or []
-                    if disputes:
-                        logging.info("BATCH_DISPUTE cid=%s n=%d",cid,n)
-                        batch_retake(cid,s,n,step_name,obj)
-                        return
-                    micro_round(cid,s)
+                    if s.get("retakes",0)>0:
+                        first=s.get("audit_first") or []
+                        agree=sorted({(i,maj) for (i,ch,maj) in disputes for (fi,fch,fmaj) in first if fi==i and fmaj==maj})
+                        logging.info("BATCH_RECHECK cid=%s n=%d code=%s disputes=%s agree=%s",cid,n,code,disputes,agree)
+                        if agree:
+                            fixed_code=code
+                            for i,maj in agree:
+                                if 0<=i<len(fixed_code):
+                                    fixed_code=fixed_code[:i]+maj+fixed_code[i+1:]
+                            s["facts"]["batch_bottle"]=fixed_code
+                            s["batch_bottle_photo"]=b64
+                            s.setdefault("batch_photos",[]).append(b64)
+                            logging.info("BATCH_ACCEPTED cid=%s n=%d code=%s fixed=%s",cid,n,code,fixed_code)
+                            micro_round(cid,s)
+                            accept_step(cid,s,n,b64)
+                            return
+                        else:
+                            batch_retake(cid,s,n,step_name,obj)
+                            return
+                    else:
+                        s["facts"]["batch_bottle"]=code
+                        s["batch_bottle_photo"]=b64
+                        s.setdefault("batch_photos",[]).append(b64)
+                        s["audit_first"]=disputes or []
+                        if disputes:
+                            logging.info("BATCH_DISPUTE cid=%s n=%d",cid,n)
+                            batch_retake(cid,s,n,step_name,obj)
+                            return
+                        micro_round(cid,s)
                 else:
                     s["facts"]["batch_box"]=code
                     micro_round(cid,s)
