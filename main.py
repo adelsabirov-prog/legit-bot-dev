@@ -837,6 +837,33 @@ def micro_round(cid,s):
     s["micro_round"]={"pos":i,"answer":a,"fixed":fixed}
     logging.info("MICRO_ROUND cid=%s pos=%d micro=%s bottle=%s box=%s fixed=%s",cid,i,a,bb,bx,fixed)
 
+def micro_audit(cid,s):
+    if not MICRO_ENABLED: return
+    f=s.get("facts",{})
+    bb=norm_code(f.get("batch_bottle"))
+    if not bb or len(bb)<6: return
+    photo=s.get("batch_bottle_photo")
+    if not photo: return
+    audited=0
+    for i,ch in enumerate(bb):
+        if ch not in ("8","B") or audited>=3: continue
+        audited+=1
+        prev_hint=" (после символов "+", ".join(bb[:i])+")" if i>0 else ""
+        try:
+            r=ask_qwen([photo],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),QWEN3_MODEL,timeout=60,attempts=1,use_system=False,temperature=0)
+        except Exception:
+            logging.exception("micro audit")
+            continue
+        m=re.match(r"^(B|8)\b",r.strip().upper())
+        a=m.group(1) if m else None
+        fixed=False
+        if a and a!=bb[i]:
+            bb=bb[:i]+a+bb[i+1:]
+            f["batch_bottle"]=bb
+            fixed=True
+        logging.info("MICRO_AUDIT cid=%s pos=%d was=%s micro=%s fixed=%s",cid,i,ch,a,fixed)
+    s["micro_audit"]={"audited":audited}
+
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
     try:
@@ -927,7 +954,7 @@ def save_case(cid,s):
         for i,b in enumerate(s["photos"]):
             with open(os.path.join(d,f"{i+1}.jpg"),"wb") as f:
                 f.write(base64.b64decode(b))
-        meta={"cid":cid,"name":s.get("name",""),"brand":s.get("brand",""),"tariff":s.get("tariff",""),"verdict":verdict_str(s["details"]),"details":s["details"],"obj":s.get("obj",""),"ff":s.get("ff",""),"model":s.get("model") or QWEN_MODEL,"ts":ts,"feedback":None,"rechecks":0,"disputed":False,"candidate":"","owner_test":is_owner(cid),"facts":s.get("facts",{}),"micro_round":s.get("micro_round")}
+        meta={"cid":cid,"name":s.get("name",""),"brand":s.get("brand",""),"tariff":s.get("tariff",""),"verdict":verdict_str(s["details"]),"details":s["details"],"obj":s.get("obj",""),"ff":s.get("ff",""),"model":s.get("model") or QWEN_MODEL,"ts":ts,"feedback":None,"rechecks":0,"disputed":False,"candidate":"","owner_test":is_owner(cid),"facts":s.get("facts",{}),"micro_round":s.get("micro_round"),"micro_audit":s.get("micro_audit")}
         with open(os.path.join(d,"meta.json"),"w",encoding="utf-8") as f:
             json.dump(meta,f,ensure_ascii=False)
         s["case_path"]=d
@@ -1715,6 +1742,8 @@ def process_image(cid,s,b64,comp):
                 if not is_box:
                     s["batch_bottle_photo"]=b64
                 logging.info("BATCH_FIXED cid=%s n=%d code=%s",cid,n,code)
+                if not is_box:
+                    micro_audit(cid,s)
                 micro_round(cid,s)
             accept_step(cid,s,n,b64)
             return
