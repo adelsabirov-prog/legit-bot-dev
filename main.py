@@ -1760,6 +1760,14 @@ def process_image(cid,s,b64,comp):
                     if code1 and code2 and code1==code2:
                         s["facts"]["batch_bottle"]=code1
                         s["batch_bottle_photo"]=b64
+                        disputes=micro_audit(cid,s)
+                        if disputes:
+                            fixed_code=code1
+                            for i,ch,maj in disputes:
+                                if 0<=i<len(fixed_code):
+                                    fixed_code=fixed_code[:i]+maj+fixed_code[i+1:]
+                            logging.info("BATCH_ARBITR_AUDIT cid=%s n=%d code=%s fixed=%s",cid,n,code1,fixed_code)
+                            s["facts"]["batch_bottle"]=fixed_code
                         micro_round(cid,s)
                         accept_step(cid,s,n,b64)
                         return
