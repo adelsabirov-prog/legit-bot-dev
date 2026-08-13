@@ -1788,8 +1788,8 @@ def process_image(cid,s,b64,comp):
                                     except Exception:
                                         logging.exception("claude arbitr %s",cm)
                                         continue
-                                    m=re.match(r"^(B|8)\b",cr.strip().upper())
-                                    ca=m.group(1) if m else None
+                                    vs=re.findall(r"\b(B|8)\b",cr or "")
+                                    ca=vs[-1] if vs else None
                                     break
                                 logging.info("CLAUDE_ARBITR cid=%s pos=%d qwen=%s claude=%s",cid,i,maj,ca)
                                 if ca==maj:
