@@ -19,7 +19,7 @@ OWNER_ID=int(os.environ.get("OWNER_ID","0"))
 BASE="https://openrouter.ai/api/v1"
 QWEN_MODEL="qwen/qwen2.5-vl-72b-instruct"
 QWEN3_MODEL="qwen/qwen3-vl-235b-a22b-instruct"
-CLAUDE_MODELS=["anthropic/claude-sonnet-4.5","anthropic/claude-haiku-4.5","anthropic/claude-sonnet-4","anthropic/claude-sonnet-4.6","anthropic/claude-opus-4.5"]
+CLAUDE_MODELS=["anthropic/claude-opus-5","anthropic/claude-sonnet-5"]
 OFERTA="https://legitcheck-perfume.vercel.app/oferta"
 PRIVACY="https://legitcheck-perfume.vercel.app/privacy"
 SUPPORT_URL="https://t.me/legitcheck_support"
@@ -1086,7 +1086,11 @@ def ask_qwen(images,user_text,model,timeout=120,attempts=2,use_system=True,tempe
     if r.status_code!=200:
         logging.error("QWEN ERROR %s %s",r.status_code,r.text[:1500])
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    d=r.json()
+    if "choices" not in d:
+        logging.error("QWEN NOCHOICES model=%s body=%s",model,r.text[:800])
+        raise ValueError("no choices")
+    return d["choices"][0]["message"]["content"]
 
 def downscale_b64(raw,limit):
     im=Image.open(io.BytesIO(raw)).convert("RGB")
