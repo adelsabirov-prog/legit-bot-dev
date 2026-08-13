@@ -1761,12 +1761,14 @@ def process_image(cid,s,b64,comp):
                         s["facts"]["batch_bottle"]=code1
                         s["batch_bottle_photo"]=b64
                         disputes=micro_audit(cid,s)
-                        if disputes:
+                        first=s.get("audit_first") or []
+                        agree=sorted({(i,maj) for (i,ch,maj) in disputes for (fi,fch,fmaj) in first if fi==i and fmaj==maj})
+                        if agree:
                             fixed_code=code1
-                            for i,ch,maj in disputes:
+                            for i,maj in agree:
                                 if 0<=i<len(fixed_code):
                                     fixed_code=fixed_code[:i]+maj+fixed_code[i+1:]
-                            logging.info("BATCH_ARBITR_AUDIT cid=%s n=%d code=%s fixed=%s",cid,n,code1,fixed_code)
+                            logging.info("BATCH_ARBITR_AUDIT cid=%s n=%d code=%s fixed=%s agree=%s",cid,n,code1,fixed_code,agree)
                             s["facts"]["batch_bottle"]=fixed_code
                         micro_round(cid,s)
                         accept_step(cid,s,n,b64)
@@ -1787,6 +1789,7 @@ def process_image(cid,s,b64,comp):
                     s["batch_bottle_photo"]=b64
                     s.setdefault("batch_photos",[]).append(b64)
                     disputes=micro_audit(cid,s)
+                    s["audit_first"]=disputes or []
                     if disputes:
                         logging.info("BATCH_DISPUTE cid=%s n=%d",cid,n)
                         batch_retake(cid,s,n,step_name,obj)
