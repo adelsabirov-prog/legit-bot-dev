@@ -1760,7 +1760,7 @@ def process_image(cid,s,b64,comp):
             if code:
                 is_box="короб" in step_name.lower()
                 if not is_box:
-                    disputes=micro_audit(cid,s)
+                    disputes=micro_audit(cid,s) or []
                     if s.get("retakes",0)>0:
                         first=s.get("audit_first") or []
                         agree=sorted({(i,maj) for (i,ch,maj) in disputes for (fi,fch,fmaj) in first if fi==i and fmaj==maj})
