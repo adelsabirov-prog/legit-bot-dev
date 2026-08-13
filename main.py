@@ -19,6 +19,7 @@ OWNER_ID=int(os.environ.get("OWNER_ID","0"))
 BASE="https://openrouter.ai/api/v1"
 QWEN_MODEL="qwen/qwen2.5-vl-72b-instruct"
 QWEN3_MODEL="qwen/qwen3-vl-235b-a22b-instruct"
+CLAUDE_MODEL="anthropic/claude-3.5-sonnet"
 OFERTA="https://legitcheck-perfume.vercel.app/oferta"
 PRIVACY="https://legitcheck-perfume.vercel.app/privacy"
 SUPPORT_URL="https://t.me/legitcheck_support"
@@ -1772,6 +1773,21 @@ def process_image(cid,s,b64,comp):
                         first=s.get("audit_first") or []
                         agree=sorted({(i,maj) for (i,ch,maj) in disputes for (fi,fch,fmaj) in first if fi==i and fmaj==maj})
                         logging.info("BATCH_RECHECK cid=%s n=%d code=%s disputes=%s agree=%s",cid,n,code,disputes,agree)
+                        if agree:
+                            confirmed=[]
+                            for i,maj in agree:
+                                prev_hint=" (после символов "+", ".join(code[:i])+")" if i>0 else ""
+                                try:
+                                    cr=ask_qwen([b64],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),CLAUDE_MODEL,timeout=45,attempts=1,use_system=False,temperature=0)
+                                except Exception:
+                                    logging.exception("claude arbitr")
+                                    continue
+                                m=re.match(r"^(B|8)\b",cr.strip().upper())
+                                ca=m.group(1) if m else None
+                                logging.info("CLAUDE_ARBITR cid=%s pos=%d qwen=%s claude=%s",cid,i,maj,ca)
+                                if ca==maj:
+                                    confirmed.append((i,maj))
+                            agree=confirmed
                         if agree:
                             fixed_code=code
                             for i,maj in agree:
