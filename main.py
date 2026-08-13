@@ -1760,6 +1760,9 @@ def process_image(cid,s,b64,comp):
             if code:
                 is_box="короб" in step_name.lower()
                 if not is_box:
+                    s["facts"]["batch_bottle"]=code
+                    s["batch_bottle_photo"]=b64
+                    s.setdefault("batch_photos",[]).append(b64)
                     disputes=micro_audit(cid,s) or []
                     if s.get("retakes",0)>0:
                         first=s.get("audit_first") or []
@@ -1771,8 +1774,6 @@ def process_image(cid,s,b64,comp):
                                 if 0<=i<len(fixed_code):
                                     fixed_code=fixed_code[:i]+maj+fixed_code[i+1:]
                             s["facts"]["batch_bottle"]=fixed_code
-                            s["batch_bottle_photo"]=b64
-                            s.setdefault("batch_photos",[]).append(b64)
                             logging.info("BATCH_ACCEPTED cid=%s n=%d code=%s fixed=%s",cid,n,code,fixed_code)
                             micro_round(cid,s)
                             accept_step(cid,s,n,b64)
@@ -1781,9 +1782,6 @@ def process_image(cid,s,b64,comp):
                             batch_retake(cid,s,n,step_name,obj)
                             return
                     else:
-                        s["facts"]["batch_bottle"]=code
-                        s["batch_bottle_photo"]=b64
-                        s.setdefault("batch_photos",[]).append(b64)
                         s["audit_first"]=disputes or []
                         if disputes:
                             logging.info("BATCH_DISPUTE cid=%s n=%d",cid,n)
