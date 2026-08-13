@@ -83,9 +83,9 @@ def canon_conf(s):
 
 MICRO_ENABLED=os.environ.get("MICRO_ENABLED","1")=="1"
 
-MODE_MICRO=("Посмотри только на символ батч-кода на позиции {pos} слева{prev_hint}. Не думай о коде целиком. "
-"Изучи его левую вертикальную грань: она идеально прямая (характерно для буквы B) или округлая "
-"(характерно для цифры 8)? Ответь СТРОГО: B или 8.")
+MODE_MICRO=("Символы B и 8 в батч-кодах часто выглядят похоже. У буквы B левая вертикальная грань идеально прямая, у цифры 8 обе стороны округлые. "
+"Теперь посмотри только на символ батч-кода на позиции {pos} слева{prev_hint}. Не думай о коде целиком. "
+"Изучи его левую вертикальную грань и ответь СТРОГО: B или 8.")
 
 def norm_code(x):
     return re.sub(r"[^A-Za-z0-9]","",""+(x or "")).upper()
@@ -306,7 +306,7 @@ MODE_VERIFY="""КОНТРОЛЬНАЯ ПРОВЕРКА (адверсариаль
 Ответь СТРОГО в формате:
 ПРОБЫ: [по каждой пробе: да/нет/не вижу — через ;]
 ВЕРДИКТ: ПОДТВЕРЖДАЮ или ОПРОВЕРГАЮ
-СТАТУС: ❌/⚠️/➖
+СТАТУС: ❌/️/➖
 ПОЧЕМУ: одно предложение."""
 
 MODE_VERIFY_GREEN="""КОНТРОЛЬНАЯ ПРОВЕРКА (поиск пропущенного). Продукт: «{name}».
@@ -379,6 +379,12 @@ MODE_SCREENSHOT="""Определи тип изображения. Критер�
 MODE_CODECHARS="""Рассмотри батч-код на фото. Перечисли его символы ПО ПОРЯДКУ, каждый отдельно, через пробел (цифры и буквы — как видишь каждый отдельный символ).
 Ответь СТРОГО в формате:
 СИМВОЛЫ: A 1 B 2 C 3"""
+
+MODE_RETAKE_HINT="""Посмотри на фото дна флакона. Батч-код не удалось прочитать надёжно.
+Определи, что мешает: блик, размытие, неудачный угол, тень, код не попал в кадр, слишком мелкий символ.
+Ответь СТРОГО двумя строками:
+ПРИЧИНА: [одно слово: блик / размытие / угол / тень / не виден / мелко]
+СОВЕТ: [один совет клиенту, как переснять именно этот флакон, нейтральным языком, одно предложение, без технических терминов]"""
 
 START_TEXT=("👋 Legit Check Perfume — разбор парфюмерии по фото на признаки несоответствия оригиналу.\n\n"
 "Как это работает:\n"
@@ -721,10 +727,21 @@ def batch_retake(cid,s,n,step_name,obj):
     r=s.get("retakes",0)
     s["retakes"]=r+1
     is_box="короб" in step_name.lower()
-    if r==0 and not is_box:
-        advice="Код может быть прозрачным и малозаметным — посмотрите дно на свету. Если код прозрачный и не виден — положите флакон на тёмную бумагу и снимите дно на её фоне."
-    else:
-        advice=hint_for(step_name,s.get("ff","default"),obj)
+    advice=None
+    b64=s.get("last_batch_b64")
+    if b64:
+        try:
+            model=s.get("model") or QWEN_MODEL
+            rh=ask_qwen([b64],MODE_RETAKE_HINT,model,timeout=45,attempts=1,use_system=False,temperature=0)
+            adv=parse(rh,"СОВЕТ")
+            if adv: advice=adv
+        except Exception:
+            logging.exception("retake hint")
+    if not advice:
+        if r==0 and not is_box:
+            advice="Код может быть прозрачным и малозаметным — посмотрите дно на свету. Если код прозрачный и не виден — положите флакон на тёмную бумагу и снимите дно на её фоне."
+        else:
+            advice=hint_for(step_name,s.get("ff","default"),obj)
     msg=f"📥 Шаг {n}: код пока не читается. Переснимите макро: {advice}"
     msg+="\nПопробуйте ещё раз — у вас получится!"
     if r>=1:
@@ -838,31 +855,35 @@ def micro_round(cid,s):
     logging.info("MICRO_ROUND cid=%s pos=%d micro=%s bottle=%s box=%s fixed=%s",cid,i,a,bb,bx,fixed)
 
 def micro_audit(cid,s):
-    if not MICRO_ENABLED: return
+    if not MICRO_ENABLED: return None
     f=s.get("facts",{})
     bb=norm_code(f.get("batch_bottle"))
-    if not bb or len(bb)<6: return
+    if not bb or len(bb)<6: return None
     photo=s.get("batch_bottle_photo")
-    if not photo: return
+    if not photo: return None
+    disputes=[]
     audited=0
     for i,ch in enumerate(bb):
         if ch not in ("8","B") or audited>=3: continue
         audited+=1
         prev_hint=" (после символов "+", ".join(bb[:i])+")" if i>0 else ""
-        try:
-            r=ask_qwen([photo],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),QWEN3_MODEL,timeout=60,attempts=1,use_system=False,temperature=0)
-        except Exception:
-            logging.exception("micro audit")
-            continue
-        m=re.match(r"^(B|8)\b",r.strip().upper())
-        a=m.group(1) if m else None
-        fixed=False
-        if a and a!=bb[i]:
-            bb=bb[:i]+a+bb[i+1:]
-            f["batch_bottle"]=bb
-            fixed=True
-        logging.info("MICRO_AUDIT cid=%s pos=%d was=%s micro=%s fixed=%s",cid,i,ch,a,fixed)
-    s["micro_audit"]={"audited":audited}
+        votes=[]
+        for _ in range(3):
+            try:
+                r=ask_qwen([photo],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),QWEN3_MODEL,timeout=60,attempts=1,use_system=False,temperature=0.7)
+            except Exception:
+                logging.exception("micro audit")
+                continue
+            m=re.match(r"^(B|8)\b",r.strip().upper())
+            if m: votes.append(m.group(1))
+        maj=None
+        for v in ("B","8"):
+            if votes.count(v)>=2: maj=v
+        logging.info("MICRO_AUDIT cid=%s pos=%d was=%s votes=%s maj=%s",cid,i,ch,votes,maj)
+        if maj and maj!=ch:
+            disputes.append((i,ch,maj))
+    s["micro_audit"]={"audited":audited,"disputes":len(disputes)}
+    return disputes if disputes else None
 
 def cross_facts(cid,s,n,b64):
     model,other=models_pair(s)
@@ -1104,7 +1125,7 @@ def img_b64(m):
     return downscale_b64(r.content,2048 if is_doc else 1600), (not is_doc), shot_flag
 
 def st(cid):
-    base={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":"","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{}}
+    base={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":"","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[]}
     return S.setdefault(cid,dict(base))
 
 def kb_main():
@@ -1130,7 +1151,7 @@ def kb_report(s,with_fb=True):
     return kb
 
 def reset(cid):
-    S[cid]={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":"","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{}}
+    S[cid]={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":"","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[]}
     bot.send_message(cid,START_TEXT,reply_markup=kb_main())
 
 def parse(res,key):
@@ -1255,7 +1276,7 @@ def verify_reds(cid,s,rep,details,model):
         up=vr.upper()
         if "ОПРОВЕРГАЮ" in up:
             st_line=parse(vr,"СТАТУС")
-            newst=next((e for e in ("➖","⚠️") if e in st_line),"⚠️")
+            newst=next((e for e in ("➖","️") if e in st_line),"⚠️")
             why=parse(vr,"ПОЧЕМУ") or "видимых доказательств маркера нет"
             if newst=="➖":
                 newfirst=f"{n} ➖ {PDF_NAMES.get(n,'')}: деталь не проверяется по заявленному маркеру: {why}"
@@ -1338,7 +1359,7 @@ def do_recheck(cid,s,n,b64):
         bot.send_message(cid,BUSY_TEXT)
         return
     line=parse(rc,"СТАТУС")
-    newst=next((e for e in ("❌","️","✅","") if e in line),"➖")
+    newst=next((e for e in ("❌","⚠️","✅","➖") if e in line),"➖")
     s["details"][n]=newst
     s["rechecks"]=s.get("rechecks",0)+1
     s["stage"]="done"
@@ -1547,7 +1568,7 @@ S={}
 @bot.message_handler(commands=["start"])
 def start(m):
     parts=m.text.split()
-    S[m.chat.id]={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{}}
+    S[m.chat.id]={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[]}
     bot.send_message(m.chat.id,START_TEXT,reply_markup=kb_main())
 
 @bot.message_handler(commands=["model"])
@@ -1729,6 +1750,21 @@ def process_image(cid,s,b64,comp):
     step_name=s["queue"][n-1]
     try:
         if "батч" in step_name.lower():
+            s["last_batch_b64"]=b64
+            if s.get("retakes",0)>0 and "короб" not in step_name.lower() and s.get("batch_photos"):
+                old_photo=s["batch_photos"][0]
+                try:
+                    code1,stt1=cross_batch(cid,s,n,old_photo)
+                    code2,stt2=cross_batch(cid,s,n,b64)
+                    logging.info("BATCH_ARBITR cid=%s n=%d c1=%s c2=%s",cid,n,code1,code2)
+                    if code1 and code2 and code1==code2:
+                        s["facts"]["batch_bottle"]=code1
+                        s["batch_bottle_photo"]=b64
+                        micro_round(cid,s)
+                        accept_step(cid,s,n,b64)
+                        return
+                except Exception:
+                    logging.exception("batch arbitr")
             code,stt=cross_batch(cid,s,n,b64)
             if stt in ("mismatch","fail"):
                 batch_retake(cid,s,n,step_name,obj)
@@ -1738,13 +1774,20 @@ def process_image(cid,s,b64,comp):
                 return
             if code:
                 is_box="короб" in step_name.lower()
-                s["facts"]["batch_box" if is_box else "batch_bottle"]=code
                 if not is_box:
+                    s["facts"]["batch_bottle"]=code
                     s["batch_bottle_photo"]=b64
+                    s.setdefault("batch_photos",[]).append(b64)
+                    disputes=micro_audit(cid,s)
+                    if disputes:
+                        logging.info("BATCH_DISPUTE cid=%s n=%d",cid,n)
+                        batch_retake(cid,s,n,step_name,obj)
+                        return
+                    micro_round(cid,s)
+                else:
+                    s["facts"]["batch_box"]=code
+                    micro_round(cid,s)
                 logging.info("BATCH_FIXED cid=%s n=%d code=%s",cid,n,code)
-                if not is_box:
-                    micro_audit(cid,s)
-                micro_round(cid,s)
             accept_step(cid,s,n,b64)
             return
         if ("короб" in step_name.lower()) or ("крышк" in step_name.lower()):
