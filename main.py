@@ -28,6 +28,10 @@ CASES_DIR="cases"
 PAY_FILE="pending.json"
 JOBS_FILE="jobs.json"
 CATALOG_FILE="catalog.json"
+CATALOG_VOL=os.path.join(CASES_DIR,"catalog.json")
+REF_STORE_FILE=os.path.join(CASES_DIR,"ref_store.json")
+REF_URLS_FILE="ref_urls.txt"
+DESIGN_FIELDS=("silhouette","hw_ratio","glass","logo_text","logo_case","font_style","blocks_order","cap_shape","cap_color","box_blocks")
 DELAY_EXP=15*60
 DELAY_STD=3*3600
 
@@ -84,9 +88,45 @@ def canon_conf(s):
 
 MICRO_ENABLED=os.environ.get("MICRO_ENABLED","1")=="1"
 
-MODE_MICRO=("Символы B и 8 в батч-кодах часто выглядят похоже. У буквы B левая вертикальная грань идеально прямая, у цифры 8 обе стороны округлые. "
-"Теперь посмотри только на символ батч-кода на позиции {pos} слева{prev_hint}. Не думай о коде целиком. "
-"Изучи его левую вертикальную грань и ответь СТРОГО: B или 8.")
+MICRO_PROMPTS={
+"B":("Символы B и 8 в батч-кодах часто выглядят похоже. У буквы B левая вертикальная грань идеально прямая, у цифры 8 обе стороны округлые. Теперь посмотри только на символ батч-кода на позиции {pos} слева{prev_hint}. Не думай о коде целиком. Изучи его левую вертикальную грань и ответь СТРОГО: B или 8.",("B","8")),
+"8":("В батч-кодах B, 0 и 8 могут выглядеть похоже. У B левая грань прямая и два выступа справа; у 0 один гладкий овал без перетяжки посередине; у 8 две петли с перетяжкой посередине. Посмотри только на символ на позиции {pos} слева{prev_hint}. Не думай о коде целиком. Ответь СТРОГО: B, 0 или 8.",("B","0","8")),
+"0":("В батч-кодах 0, O и 8 могут выглядеть похоже. 0 — узкий вытянутый овал; O — широкий, почти круглый; 8 — с перетяжкой посередине (две петли). Посмотри только на символ на позиции {pos} слева{prev_hint}. Не думай о коде целиком. Ответь СТРОГО: 0, O или 8.",("0","O","8")),
+"O":("O и 0 могут выглядеть похоже. O — широкий, почти круглый; 0 — узкий вытянутый овал. Посмотри только на символ на позиции {pos} слева{prev_hint}. Ответь СТРОГО: O или 0.",("O","0")),
+"1":("В батч-кодах 1, I и 7 могут выглядеть похоже. У 1 сверху слева косой флажок; у I симметричные горизонтальные перекладины сверху и снизу; у 7 длинная горизонтальная перекладина сверху и диагональный штрих. Посмотри только на символ на позиции {pos} слева{prev_hint}. Ответь СТРОГО: 1, I или 7.",("1","I","7")),
+"I":("I и 1 могут выглядеть похоже. У I симметричные перекладины сверху и снизу или чистая вертикаль; у 1 косой флажок сверху слева. Посмотри только на символ на позиции {pos} слева{prev_hint}. Ответь СТРОГО: I или 1.",("I","1")),
+"7":("7 и 1 могут выглядеть похоже. У 7 длинная горизонтальная перекладина сверху и диагональный штрих; у 1 вертикальный штрих с косым флажком сверху слева. Посмотри только на символ на позиции {pos} слева{prev_hint}. Ответь СТРОГО: 7 или 1.",("7","1")),
+"5":("5 и S могут выглядеть похоже. У 5 прямая перекладина сверху и угловатый левый верх; S полностью скруглена без прямых линий. Посмотри только на символ на позиции {pos} слева{prev_hint}. Ответь СТРОГО: 5 или S.",("5","S")),
+"S":("S и 5 могут выглядеть похоже. S полностью скруглена без прямых линий; у 5 прямая перекладина сверху и угловатый левый верх. Посмотри только на символ на позиции {pos} слева{prev_hint}. Ответь СТРОГО: S или 5.",("S","5")),
+"2":("2 и Z могут выглядеть похоже. У 2 скруглённый изгиб сверху; у Z прямая перекладина сверху и острые углы. Посмотри только на символ на позиции {pos} слева{prev_hint}. Ответь СТРОГО: 2 или Z.",("2","Z")),
+"Z":("Z и 2 могут выглядеть похоже. У Z прямая перекладина сверху и острые углы; у 2 скруглённый изгиб сверху. Посмотри только на символ на позиции {pos} слева{prev_hint}. Ответь СТРОГО: Z или 2.",("Z","2")),
+}
+T1_CHARS=set("B80O1I")
+T2_CHARS=set("75S2Z")
+GROUPS=[{"B","8"},{"0","8"},{"0","O"},{"1","I"},{"1","7"},{"5","S"},{"2","Z"}]
+
+def micro_prompt_for(code,i):
+    item=MICRO_PROMPTS.get(code[i])
+    if not item: return None,None
+    tmpl,allowed=item
+    prev_hint=" (после символов "+", ".join(code[:i])+")" if i>0 else ""
+    return tmpl.format(pos=i+1,prev_hint=prev_hint),allowed
+
+def parse_micro(resp,allowed):
+    if not resp: return None
+    vs=[c for c in re.findall(r"\b([A-Z0-9])\b",resp.upper()) if c in allowed]
+    return vs[-1] if vs else None
+
+def cross_diff_pos(s):
+    cc=s.get("cross_c") or ()
+    cs=[x for x in cc if x]
+    pos=set()
+    if len(cs)>=2:
+        L=max(len(x) for x in cs)
+        for i in range(L):
+            if len({x[i] for x in cs if i<len(x)})>1: pos.add(i)
+    return pos
+
 
 def norm_code(x):
     return re.sub(r"[^A-Za-z0-9]","",""+(x or "")).upper()
@@ -126,12 +166,42 @@ def norm_name(t):
     t=re.sub(r"[^a-z0-9а-яё]+"," ",t.lower())
     return re.sub(r"\s+"," ",t).strip()
 
+def sync_catalog_to_volume():
+    try:
+        if not os.path.exists(CATALOG_VOL):
+            if os.path.exists(CATALOG_FILE):
+                with open(CATALOG_FILE,encoding="utf-8") as a,open(CATALOG_VOL,"w",encoding="utf-8") as b:
+                    b.write(a.read())
+            else:
+                with open(CATALOG_VOL,"w",encoding="utf-8") as f: json.dump([],f)
+    except Exception:
+        logging.exception("catalog sync")
+
+def load_catalog_list():
+    try:
+        with open(CATALOG_VOL,encoding="utf-8") as f: return json.load(f)
+    except Exception:
+        return []
+
+def save_catalog_list(cat):
+    with open(CATALOG_VOL,"w",encoding="utf-8") as f:
+        json.dump(cat,f,ensure_ascii=False,indent=1)
+
+def load_ref_store():
+    try:
+        with open(REF_STORE_FILE,encoding="utf-8") as f: return json.load(f)
+    except Exception:
+        return {}
+
+def save_ref_store(d):
+    with open(REF_STORE_FILE,"w",encoding="utf-8") as f: json.dump(d,f)
+
 CAT_INDEX={}
 CAT_KEYS=[]
 def load_catalog():
     global CAT_KEYS
     try:
-        with open(CATALOG_FILE,encoding="utf-8") as f:
+        with open(CATALOG_VOL,encoding="utf-8") as f:
             data=json.load(f)
         for rec in data:
             keys=[norm_name(rec.get("name",""))]+[norm_name(a) for a in rec.get("aliases",[])]
@@ -141,6 +211,7 @@ def load_catalog():
         logging.info("CATALOG loaded recs=%d keys=%d",len(data),len(CAT_KEYS))
     except Exception:
         logging.exception("catalog load (file optional)")
+sync_catalog_to_volume()
 load_catalog()
 
 def catalog_match(t):
@@ -772,6 +843,7 @@ def cross_batch(cid,s,n,b64):
     nobody=(not c1 or "НЕ ВИДЕН" in c1) and (not c2 or "НЕ ВИДЕН" in c2) and not code
     verdict="fixed" if code else ("fail" if nobody else "mismatch")
     logging.info("CROSS_BATCH cid=%s n=%d m1=%s m2=%s c1=%s c2=%s c3=%s code=%s verdict=%s",cid,n,model,other,c1,c2,c3,code,verdict)
+    s["cross_c"]=(c1,c2,c3)
     if code:
         c3n=norm_code(c3)
         confirmed=bool(c3n) and "НЕ ВИДЕН" not in (c3 or "") and (code in c3n or c3n in code)
@@ -837,17 +909,17 @@ def micro_round(cid,s):
     diff=[i for i in range(len(bb)) if bb[i]!=bx[i]]
     if len(diff)!=1: return
     i=diff[0]
-    if {bb[i],bx[i]}!={"B","8"}: return
+    if not next((g for g in GROUPS if {bb[i],bx[i]}<=g),None): return
     photo=s.get("batch_bottle_photo")
     if not photo: return
-    prev_hint=" (после символов "+", ".join(bb[:i])+")" if i>0 else ""
+    prompt,allowed=micro_prompt_for(bb,i)
+    if not prompt: return
     try:
-        r=ask_qwen([photo],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),QWEN3_MODEL,timeout=60,attempts=1,use_system=False,temperature=0)
+        r=ask_qwen([photo],prompt,QWEN3_MODEL,timeout=60,attempts=1,use_system=False,temperature=0)
     except Exception:
         logging.exception("micro round")
         return
-    m=re.match(r"^(B|8)\b",r.strip().upper())
-    a=m.group(1) if m else None
+    a=parse_micro(r,allowed)
     fixed=False
     if a and a==bx[i] and a!=bb[i]:
         f["batch_bottle"]=bb[:i]+a+bb[i+1:]
@@ -863,27 +935,27 @@ def micro_audit(cid,s):
     if not bb or len(bb)<6: return None
     photo=s.get("batch_bottle_photo")
     if not photo: return None
-    poslist=[i for i,ch in enumerate(bb) if ch in ("8","B")][:3]
+    diff=cross_diff_pos(s)
+    poslist=[i for i,ch in enumerate(bb) if ch in T1_CHARS][:5]+[i for i,ch in enumerate(bb) if ch in T2_CHARS and i in diff][:2]
     if not poslist: return None
     def vote(i):
-        prev_hint=" (после символов "+", ".join(bb[:i])+")" if i>0 else ""
+        prompt,allowed=micro_prompt_for(bb,i)
+        if not prompt: return None
         def one(_):
             try:
-                r=ask_qwen([photo],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),QWEN3_MODEL,timeout=30,attempts=1,use_system=False,temperature=0.7)
+                r=ask_qwen([photo],prompt,QWEN3_MODEL,timeout=30,attempts=1,use_system=False,temperature=0.7)
             except Exception:
-                logging.exception("micro audit")
                 return None
-            m=re.match(r"^(B|8)\b",r.strip().upper())
-            return m.group(1) if m else None
+            return parse_micro(r,allowed)
         with ThreadPoolExecutor(max_workers=3) as ex:
             vs=[v for v in ex.map(one,range(3)) if v]
         maj=None
-        for v in ("B","8"):
-            if vs.count(v)>=2: maj=v
+        cand=sorted(set(vs),key=lambda v:-vs.count(v))
+        if cand and vs.count(cand[0])>=2: maj=cand[0]
         logging.info("MICRO_AUDIT cid=%s pos=%d was=%s votes=%s maj=%s",cid,i,bb[i],vs,maj)
         return (i,bb[i],maj) if (maj and maj!=bb[i]) else None
     disputes=[]
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         for res in ex.map(vote,poslist):
             if res: disputes.append(res)
     s["micro_audit"]={"audited":len(poslist),"disputes":len(disputes)}
@@ -1053,6 +1125,91 @@ def crop_b64(b64,box):
     buf=io.BytesIO(); im.save(buf,"JPEG",quality=88)
     return base64.b64encode(buf.getvalue()).decode()
 
+def fetch_main_photo(url):
+    r=requests.get(url,timeout=30,headers={"User-Agent":"Mozilla/5.0 (X11; Linux x86_64) legitcheck-ref-bot"})
+    r.raise_for_status()
+    m=re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"',r.text) or re.search(r'<meta[^>]+content="([^"]+)"[^>]+property="og:image"',r.text)
+    if not m: return None
+    src=m.group(1)
+    if src.startswith("//"): src="https:"+src
+    im=requests.get(src,timeout=30)
+    im.raise_for_status()
+    return downscale_b64(base64.b64encode(im.content).decode(),1600)
+
+def transcribe_design(b64):
+    return design_transcribe(b64)
+
+def process_ref_line(line):
+    parts=[p.strip() for p in line.split("|")]
+    if len(parts)<3: return None
+    url,name,brand=parts[0],parts[1],parts[2]
+    official=parts[3] if len(parts)>3 else None
+    m=re.search(r"-(\d+)\.html",url)
+    source="fragrantica/"+(m.group(1) if m else norm_name(name))
+    photo=fetch_main_photo(url)
+    if not photo:
+        logging.warning("REF no og:image %s",url); return source+":no_photo"
+    d=transcribe_design(photo)
+    if not d:
+        logging.warning("REF transcribe fail %s",url); return source+":fail"
+    crops={}
+    for key in ("label_bbox","cap_bbox"):
+        bb=d.get(key)
+        if bb and len(bb)==4 and all(isinstance(v,(int,float)) for v in bb):
+            try: crops[key.replace("_bbox","")]=crop_b64(photo,[int(v) for v in bb])
+            except Exception: pass
+    status="auto"
+    if official:
+        try:
+            op=fetch_main_photo(official)
+            if op:
+                od=transcribe_design(op)
+                if od and design_hard(od,d):
+                    status="review"
+                    logging.info("REF cross mismatch %s -> review",source)
+        except Exception:
+            logging.exception("REF official fetch")
+    cat=load_catalog_list()
+    rec=next((r for r in cat if norm_name(r.get("name",""))==norm_name(name)),None)
+    if not rec:
+        rec={"name":name,"brand":brand,"aliases":[]}
+        cat.append(rec)
+    rec["design"]={"status":status,"source":source,"fields":{k:d.get(k) for k in DESIGN_FIELDS}}
+    save_catalog_list(cat)
+    store=load_ref_store()
+    store[source]={"photo":photo,"crops":crops}
+    save_ref_store(store)
+    load_catalog()
+    logging.info("REF done %s status=%s",source,status)
+    return source+":"+status
+
+def ref_autorun():
+    try:
+        if not os.path.exists(REF_URLS_FILE): return
+        with open(REF_URLS_FILE,encoding="utf-8") as f:
+            lines=[l.strip() for l in f if l.strip() and not l.startswith("#")]
+        store=load_ref_store()
+        todo=[]
+        for line in lines:
+            parts=[p.strip() for p in line.split("|")]
+            if len(parts)<3: continue
+            m=re.search(r"-(\d+)\.html",parts[0])
+            src="fragrantica/"+(m.group(1) if m else norm_name(parts[1]))
+            if src not in store: todo.append(line)
+        if not todo: return
+        report=[]
+        for line in todo:
+            try:
+                r=process_ref_line(line)
+                if r: report.append(r)
+            except Exception:
+                logging.exception("REF line")
+            time.sleep(2)
+        if report and OWNER_ID:
+            bot.send_message(OWNER_ID,"📚 Эталоны обработаны:\n"+"\n".join(report))
+    except Exception:
+        logging.exception("ref autorun")
+
 def recheck_limit(s):
     return 2 if s.get("tariff")=="Экспресс" else 1
 
@@ -1134,7 +1291,7 @@ def img_b64(m):
     return downscale_b64(r.content,2048 if is_doc else 1600), (not is_doc), shot_flag
 
 def st(cid):
-    base={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":"","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[]}
+    base={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":"","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[],"step_photos":{}}
     return S.setdefault(cid,dict(base))
 
 def kb_main():
@@ -1160,7 +1317,7 @@ def kb_report(s,with_fb=True):
     return kb
 
 def reset(cid):
-    S[cid]={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":"","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[]}
+    S[cid]={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":"","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[],"step_photos":{}}
     bot.send_message(cid,START_TEXT,reply_markup=kb_main())
 
 def parse(res,key):
@@ -1204,6 +1361,7 @@ def accept_step(cid,s,n,b64):
     s["pending"]=-1; s["pending_b64"]=""
     s["retakes"]=0
     name=s["queue"][n-1]
+    s.setdefault("step_photos",{})[name]=b64
     ni=first_open(s)
     if ni>=0:
         if out_of_order:
@@ -1419,6 +1577,90 @@ def facts_lines(s):
         out["05"].append("Фиксированные данные: гравировка крышки — «"+f["ГРАВИРОВКА КРЫШКИ"]+"».")
     return out
 
+DESIGN_TRANSCRIBE_CLIENT=("""Посмотри на фото парфюмерии. Заполни поля дизайна продукта.
+Ответь СТРОГО валидным JSON без маркдауна:
+{"product_visible":true,"silhouette":"cylinder|rectangular|sphere|other","hw_ratio":<число, отношение высоты флакона к ширине>,"glass":"<прозрачность_цвет по-английски через подчёркивание, например transparent_pink, opaque_white>,"logo_text":"<текст логотипа>","logo_case":"lower|upper|mixed","font_style":"serif|sans|script","blocks_order":[<блоки на флаконе сверху вниз из: logo, ornament, name, concentration, volume, other>],"cap_shape":"truncated_cone|cylinder|sphere|flat|other","cap_color":"<цвет по-английски>","box_blocks":[<блоки лицевой стороны коробки сверху вниз, если коробка видна, иначе []>],"label_bbox":[x1,y1,x2,y2],"cap_bbox":[x1,y1,x2,y2]}
+Координаты 0-1000. Если поле не видно — null. Если флакона нет — {"product_visible":false}.""")
+
+DESIGN_CROP_DIFF="""Перед тобой два фрагмента этикетки парфюма: первый — эталон из каталога, второй — фото клиента. Назови видимые различия типографики и раскладки (шрифт, кернинг, толщина линий, порядок блоков) одним предложением. Если различий нет — ответь одним словом: нет."""
+
+def design_transcribe(b64):
+    try:
+        raw=ask_qwen([b64],DESIGN_TRANSCRIBE_CLIENT,QWEN3_MODEL,timeout=90,attempts=1,use_system=False,temperature=0)
+    except Exception:
+        logging.exception("design transcribe")
+        return None
+    m=re.search(r"\{.*\}",raw,re.S)
+    if not m: return None
+    try:
+        d=json.loads(m.group(0))
+    except Exception:
+        return None
+    return d if d.get("product_visible",True) else None
+
+def design_hard(ref,cli):
+    out=[]
+    for f in ("silhouette","logo_case","font_style","cap_shape"):
+        rv,cv=ref.get(f),cli.get(f)
+        if rv and cv and str(rv).strip().lower()!=str(cv).strip().lower(): out.append((f,rv,cv))
+    rb,cb=ref.get("blocks_order") or [],cli.get("blocks_order") or []
+    if rb and cb and rb!=cb: out.append(("blocks_order",rb,cb))
+    return out
+
+def design_diff(ref,cli):
+    hard=design_hard(ref,cli); soft=[]
+    for f in ("glass","cap_color"):
+        rv,cv=ref.get(f),cli.get(f)
+        if rv and cv:
+            nr,nc=re.sub(r"^(light|dark)_","",str(rv).lower()),re.sub(r"^(light|dark)_","",str(cv).lower())
+            if nr!=nc: soft.append((f,rv,cv))
+    try:
+        rr,rc=float(ref.get("hw_ratio")),float(cli.get("hw_ratio"))
+        if rr and rc and abs(rr-rc)>0.1*rr: soft.append(("hw_ratio",rr,rc))
+    except Exception:
+        pass
+    return hard,soft
+
+def design_lines(s):
+    out={"01":[],"02":[],"05":[]}
+    rec=catalog_match(s.get("name") or "")
+    d=(rec or {}).get("design") if rec else None
+    if not d or d.get("status") not in ("auto","confirmed"): return out
+    ref=d.get("fields") or {}
+    word="эталоном" if d.get("status")=="confirmed" else "эталоном-кандидатом"
+    sp=s.get("step_photos",{})
+    bottle_photo=next((v for k,v in sp.items() if "флакон спереди" in k.lower()),None)
+    box_photo=next((v for k,v in sp.items() if "короб" in k.lower() and "лицев" in k.lower()),None)
+    cli_b=design_transcribe(bottle_photo) if bottle_photo else None
+    cli_x=design_transcribe(box_photo) if box_photo else None
+    if cli_b:
+        hard,soft=design_diff(ref,cli_b)
+        h05=[x for x in hard if x[0]=="cap_shape"]+[x for x in soft if x[0]=="cap_color"]
+        h02=[x for x in hard if x[0]!="cap_shape"]+[x for x in soft if x[0]!="cap_color"]
+        if h02:
+            out["02"].append("Сверка дизайна: расхождение с "+word+": "+"; ".join(f"{f} — в каталоге {rv}, на фото {cv}" for f,rv,cv in h02)+".")
+        else:
+            out["02"].append("Сверка дизайна: форма флакона, стекло, логотип и раскладка надписей соответствуют "+word+"; расхождений дизайна не выявлено.")
+        if h05:
+            out["05"].append("Сверка дизайна: расхождение с "+word+": "+"; ".join(f"{f} — в каталоге {rv}, на фото {cv}" for f,rv,cv in h05)+".")
+        ref_label=load_ref_store().get(d.get("source"),{}).get("crops",{}).get("label")
+        cli_bb=cli_b.get("label_bbox") or []
+        if ref_label and bottle_photo and len(cli_bb)==4:
+            try:
+                cli_label=crop_b64(bottle_photo,[int(v) for v in cli_bb])
+                dd=ask_qwen([ref_label,cli_label],DESIGN_CROP_DIFF,QWEN3_MODEL,timeout=60,attempts=1,use_system=False,temperature=0)
+                if dd and not dd.strip().lower().startswith("нет"):
+                    out["02"].append("Типографика этикетки: отличие от эталонного кропа — "+dd.strip())
+            except Exception:
+                logging.exception("design crop diff")
+    if cli_x:
+        rb,cb=ref.get("box_blocks") or [],cli_x.get("box_blocks") or []
+        if rb and cb and rb!=cb:
+            out["01"].append("Сверка дизайна: порядок блоков надписей коробки отличается от "+word+": в каталоге "+", ".join(map(str,rb))+", на фото "+", ".join(map(str,cb))+".")
+        elif rb and cb:
+            out["01"].append("Сверка дизайна: порядок блоков надписей коробки соответствует "+word+".")
+    return out
+
 def append_to_detail(rep,n,lines):
     if not lines: return rep
     ls=rep.split("\n")
@@ -1498,6 +1740,9 @@ def do_report(cid):
     fl=facts_lines(s)
     for n in ("01","03","05"):
         rep=append_to_detail(rep,n,fl.get(n,[]))
+    dl=design_lines(s)
+    for n in ("01","02","05"):
+        rep=append_to_detail(rep,n,dl.get(n,[]))
     if s.get("obj")=="bottle":
         marker="Аромат и состав"
         if marker in rep:
@@ -1577,7 +1822,7 @@ S={}
 @bot.message_handler(commands=["start"])
 def start(m):
     parts=m.text.split()
-    S[m.chat.id]={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[]}
+    S[m.chat.id]={"name":"","brand":"","photos":[],"shots":"","queue":[],"closed":[],"cannot":[],"stage":"name","source":parts[1] if len(parts)>1 else "","tariff":"","ff":"default","obj":"","pending":-1,"pending_b64":"","retakes":0,"chain_complete":False,"last_closed":-1,"report_text":"","details":{},"rechecks":0,"rc_photo":"","rc_num":"","model":"","crops":[],"case_path":"","paid":False,"pay_id":"","pay_url":"","facts":{},"batch_photos":[],"step_photos":{}}
     bot.send_message(m.chat.id,START_TEXT,reply_markup=kb_main())
 
 @bot.message_handler(commands=["model"])
@@ -1764,7 +2009,10 @@ def process_image(cid,s,b64,comp):
                 batch_retake(cid,s,n,step_name,obj)
                 return
             if stt=="error":
-                accept_step(cid,s,n,b64)
+                time.sleep(30)
+                code,stt=cross_batch(cid,s,n,b64)
+            if stt=="error":
+                send_html(cid,"⚠️ Сервис перегружен. Пришлите это фото ещё раз — переснимать по-другому не нужно.")
                 return
             if code:
                 is_box="короб" in step_name.lower()
@@ -1780,16 +2028,16 @@ def process_image(cid,s,b64,comp):
                         if agree:
                             confirmed=[]
                             for i,maj in agree:
-                                prev_hint=" (после символов "+", ".join(code[:i])+")" if i>0 else ""
+                                prompt,allowed=micro_prompt_for(code,i)
+                                if not prompt: continue
                                 ca=None
                                 for cm in CLAUDE_MODELS:
                                     try:
-                                        cr=ask_qwen([b64],MODE_MICRO.format(pos=i+1,prev_hint=prev_hint),cm,timeout=45,attempts=1,use_system=False,temperature=0)
+                                        cr=ask_qwen([b64],prompt,cm,timeout=45,attempts=1,use_system=False,temperature=0)
                                     except Exception:
                                         logging.exception("claude arbitr %s",cm)
                                         continue
-                                    vs=re.findall(r"\b(B|8)\b",cr or "")
-                                    ca=vs[-1] if vs else None
+                                    ca=parse_micro(cr,allowed)
                                     break
                                 logging.info("CLAUDE_ARBITR cid=%s pos=%d qwen=%s claude=%s",cid,i,maj,ca)
                                 if ca==maj:
@@ -1946,6 +2194,16 @@ def text(m):
 @bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report","restart","close","fb_up","fb_down","skills","obj_bottle","obj_both","model_switch","paycheck") or c.data.startswith("rc_"))
 def cb(c):
     cid=c.message.chat.id; s=st(cid)
+    if c.data.startswith("ref_ok:"):
+        bot.answer_callback_query(c.id)
+        ref_set_status(c.data[7:],"confirmed")
+        bot.send_message(cid,"Эталон подтверждён: "+c.data[7:])
+        return
+    if c.data.startswith("ref_no:"):
+        bot.answer_callback_query(c.id)
+        ref_set_status(c.data[7:],"review")
+        bot.send_message(cid,"Эталон сброшен в review: "+c.data[7:])
+        return
     if c.data=="skills":
         bot.answer_callback_query(c.id)
         bot.send_message(cid,SKILLS_TEXT)
@@ -2050,5 +2308,44 @@ def cb(c):
             return
         do_report(cid)
 
+@bot.message_handler(commands=["refcheck"])
+def cmd_refcheck(m):
+    cid=m.chat.id
+    if not is_owner(cid): return
+    import random as _rnd
+    n=1
+    parts=m.text.split()
+    if len(parts)>1 and parts[1].isdigit(): n=int(parts[1])
+    seen=set(); uniq=[]
+    for r in CAT_INDEX.values():
+        d=(r.get("design") or {})
+        if d.get("status")=="auto" and d.get("source") not in seen:
+            seen.add(d.get("source")); uniq.append(r)
+    if not uniq:
+        bot.send_message(cid,"Нет эталонов со статусом auto."); return
+    for r in _rnd.sample(uniq,min(n,len(uniq))):
+        d=r["design"]; src=d["source"]
+        photo=load_ref_store().get(src,{}).get("photo")
+        f=d.get("fields") or {}
+        txt="СПОТ-ЧЕК · "+r.get("name","")+" ("+src+")\n"+"\n".join(f"{k}: {v}" for k,v in f.items() if v)
+        kb=types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("✅ Подтвердить",callback_data="ref_ok:"+src),types.InlineKeyboardButton("❌ Сбросить",callback_data="ref_no:"+src))
+        if photo:
+            bot.send_photo(cid,io.BytesIO(base64.b64decode(photo)),caption=txt,reply_markup=kb)
+        else:
+            bot.send_message(cid,txt,reply_markup=kb)
+
+def ref_set_status(src,stt):
+    try:
+        cat=load_catalog_list()
+        for r in cat:
+            if (r.get("design") or {}).get("source")==src:
+                r["design"]["status"]=stt
+        save_catalog_list(cat)
+        load_catalog()
+    except Exception:
+        logging.exception("ref status")
+
 threading.Thread(target=payment_watcher,daemon=True).start()
+threading.Thread(target=ref_autorun,daemon=True).start()
 bot.infinity_polling(timeout=60)
