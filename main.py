@@ -1141,7 +1141,7 @@ def fetch_main_photo(url):
     if src.startswith("//"): src="https:"+src
     im=requests.get(src,timeout=30,headers={"User-Agent":hdr["User-Agent"]})
     im.raise_for_status()
-    return downscale_b64(base64.b64encode(im.content).decode(),1600)
+    return downscale_b64(im.content,1600)
 
 def transcribe_design(b64):
     return design_transcribe(b64)
