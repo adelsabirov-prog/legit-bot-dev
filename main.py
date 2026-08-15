@@ -1204,6 +1204,23 @@ def fetch_main_photo(url):
 
 def transcribe_design(b64):
     return design_transcribe(b64)
+STUDIO_PROMPT="Посмотри на фото. Это чистое студийное фото флакона парфюма: флакон крупно на однотонном фоне, без людей, сцен, блесток, рендеров и посторонних предметов? Ответь одним словом: ДА или НЕТ."
+
+def is_studio(b64):
+    try:
+        r=ask_qwen([b64],STUDIO_PROMPT,QWEN_MODEL,timeout=30,attempts=1,use_system=False,temperature=0)
+    except Exception:
+        logging.exception("studio check")
+        return False
+    u=r.strip().upper()
+    return u.startswith("ДА") or u.startswith("YES")
+
+def card_crop_b64(b64):
+    im=Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+    w,h=im.size
+    im=im.crop((0,0,int(w*0.40),int(h*0.70)))
+    buf=io.BytesIO(); im.save(buf,"JPEG",quality=88)
+    return base64.b64encode(buf.getvalue()).decode()
 
 def process_ref_line(line):
     parts=[p.strip() for p in line.split("|")]
@@ -1216,19 +1233,30 @@ def process_ref_line(line):
     if official:
         try:
             op=fetch_main_photo(official)
-            if op:
+            if op and is_studio(op):
                 od=transcribe_design(op)
                 if od: d,photo,primary=od,op,"official"
         except Exception:
             logging.exception("REF official fetch")
     if d is None:
-        photo=fetch_main_photo(url)
-        if not photo:
-            logging.warning("REF no og:image %s",url); return source+":no_photo"
-        d=transcribe_design(photo)
-        if not d:
-            logging.warning("REF transcribe fail %s",url); return source+":fail"
-        primary="fragrantica"
+        try:
+            card=fetch_main_photo(url)
+        except Exception:
+            logging.exception("REF fragrantica fetch"); card=None
+        if card:
+            crop=card_crop_b64(card)
+            fd=transcribe_design(crop)
+            if fd: d,photo,primary=fd,crop,"fragrantica"
+    if d is None and official:
+        try:
+            op=fetch_main_photo(official)
+            if op:
+                od=transcribe_design(op)
+                if od: d,photo,primary=od,op,"official_any"
+        except Exception:
+            logging.exception("REF official fallback")
+    if d is None:
+        logging.warning("REF no photo %s",url); return source+":no_photo"
     crops={}
     for key in ("label_bbox","cap_bbox"):
         bb=d.get(key)
@@ -1236,16 +1264,6 @@ def process_ref_line(line):
             try: crops[key.replace("_bbox","")]=crop_b64(photo,[int(v) for v in bb])
             except Exception: pass
     status="auto"
-    if primary=="official":
-        try:
-            fp=fetch_main_photo(url)
-            if fp:
-                fd=transcribe_design(fp)
-                if fd and design_hard(fd,d):
-                    status="review"
-                    logging.info("REF cross mismatch %s -> review",source)
-        except Exception:
-            logging.exception("REF fragrantica cross")
     cat=load_catalog_list()
     rec=next((r for r in cat if norm_name(r.get("name",""))==norm_name(name)),None)
     if not rec:
@@ -1290,8 +1308,12 @@ def ref_autorun():
 def recheck_limit(s):
     return 2 if s.get("tariff")=="Экспресс" else 1
 
-def ask_qwen(images,user_text,model,timeout=120,attempts=2,use_system=True,temperature=None):
-    content=[{"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b}"}} for b in images]
+def ask_qwen(images,user_text,model,timeout=120,attempts=2,use_system=True,temperature=None,tags=None):
+    content=[]
+    for i,b in enumerate(images):
+        content.append({"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{b}"}})
+        if tags and i<len(tags) and tags[i]:
+            content.append({"type":"text","text":"фото %d: %s"%(i+1,tags[i])})
     content.append({"type":"text","text":user_text})
     messages=[]
     if use_system: messages.append({"role":"system","content":SYSTEM})
@@ -1723,7 +1745,10 @@ def design_lines(s):
     d=(rec or {}).get("design") if rec else None
     if not d or d.get("status") not in ("auto","confirmed"): return out
     ref=d.get("fields") or {}
-    word="эталоном" if d.get("status")=="confirmed" else "эталоном-кандидатом"
+    if d.get("status")=="confirmed":
+        w_with,w_to,w_from="эталоном","эталону","эталона"
+    else:
+        w_with,w_to,w_from="эталоном-кандидатом","эталону-кандидату","эталона-кандидата"
     sp=s.get("step_photos",{})
     bottle_photo=next((v for k,v in sp.items() if "флакон спереди" in k.lower()),None)
     box_photo=next((v for k,v in sp.items() if "короб" in k.lower() and "лицев" in k.lower()),None)
@@ -1731,14 +1756,15 @@ def design_lines(s):
     cli_x=design_transcribe(box_photo) if box_photo else None
     if cli_b:
         hard,soft=design_diff(ref,cli_b)
-        h05=[x for x in hard if x[0]=="cap_shape"]+[x for x in soft if x[0]=="cap_color"]
-        h02=[x for x in hard if x[0]!="cap_shape"]+[x for x in soft if x[0]!="cap_color"]
+        soft_use=soft if len(soft)>=2 else []
+        h05=[x for x in hard if x[0]=="cap_shape"]+[x for x in soft_use if x[0]=="cap_color"]
+        h02=[x for x in hard if x[0]!="cap_shape"]+[x for x in soft_use if x[0]!="cap_color"]
         if h02:
-            out["02"].append("Сверка дизайна: расхождение с "+word+": "+"; ".join(f"{f} — в каталоге {rv}, на фото {cv}" for f,rv,cv in h02)+".")
+            out["02"].append("Сверка дизайна: расхождение с "+w_with+": "+"; ".join(f"{f} — в каталоге {rv}, на фото {cv}" for f,rv,cv in h02)+".")
         else:
-            out["02"].append("Сверка дизайна: форма флакона, стекло, логотип и раскладка надписей соответствуют "+word+"; расхождений дизайна не выявлено.")
+            out["02"].append("Сверка дизайна: форма флакона, стекло, логотип и раскладка надписей соответствуют "+w_to+"; расхождений дизайна не выявлено.")
         if h05:
-            out["05"].append("Сверка дизайна: расхождение с "+word+": "+"; ".join(f"{f} — в каталоге {rv}, на фото {cv}" for f,rv,cv in h05)+".")
+            out["05"].append("Сверка дизайна: расхождение с "+w_with+": "+"; ".join(f"{f} — в каталоге {rv}, на фото {cv}" for f,rv,cv in h05)+".")
         ref_label=load_ref_store().get(d.get("source"),{}).get("crops",{}).get("label")
         cli_bb=cli_b.get("label_bbox") or []
         if ref_label and bottle_photo and len(cli_bb)==4:
@@ -1752,9 +1778,9 @@ def design_lines(s):
     if cli_x:
         rb,cb=ref.get("box_blocks") or [],cli_x.get("box_blocks") or []
         if rb and cb and rb!=cb:
-            out["01"].append("Сверка дизайна: порядок блоков надписей коробки отличается от "+word+": в каталоге "+", ".join(map(str,rb))+", на фото "+", ".join(map(str,cb))+".")
+            out["01"].append("Сверка дизайна: порядок блоков надписей коробки отличается от "+w_from+": в каталоге "+", ".join(map(str,rb))+", на фото "+", ".join(map(str,cb))+".")
         elif rb and cb:
-            out["01"].append("Сверка дизайна: порядок блоков надписей коробки соответствует "+word+".")
+            out["01"].append("Сверка дизайна: порядок блоков надписей коробки соответствует "+w_to+".")
     return out
 
 def append_to_detail(rep,n,lines):
@@ -1790,8 +1816,15 @@ def do_report(cid):
         tariff_note="\nТАРИФ СТАНДАРТ: обоснования 1-2 предложения на деталь."
     model,other=models_pair(s)
     prompt=MODE2.format(name=s["name"] or "?")+note+tariff_note+fn
+    tagged=[]; tags=[]
+    for name in s.get("queue",[]):
+        ph=(s.get("step_photos") or {}).get(name)
+        if ph: tagged.append(ph); tags.append(name)
+    if not tagged:
+        tagged=list(s["photos"]); tags=[""]*len(tagged)
+    prompt=prompt+"\n\nПравило прицеливания: каждую деталь оценивай в первую очередь по фото с её подписью (батч — по фото «Батч-код на флаконе/коробке», завальцовка — по «Распылитель и завальцовка» и т.д.). Соседние фото используй только если на подписанном кадре деталь не видна — и тогда укажи это в обосновании."
     try:
-        rep=ask_qwen(s["photos"],prompt,model,timeout=240,attempts=2,temperature=0.2)
+        rep=ask_qwen(tagged,prompt,model,timeout=240,attempts=2,temperature=0.2,tags=tags)
     except Exception:
         logging.exception("mode2")
         if s.get("paid"):
@@ -2018,6 +2051,24 @@ def process_image(cid,s,b64,comp):
     model=s.get("model") or QWEN_MODEL
     s["pending"]=-1; s["pending_b64"]=""
     bot.send_message(cid,"📥 Загружаю фото…")
+    if s.get("batch_conflict"):
+        s["batch_conflict"]=False
+        code,stt=cross_batch(cid,s,1,b64)
+        bb=norm_code(s["facts"].get("batch_box"))
+        cc=norm_code(code)
+        if cc and bb and cc==bb:
+            s["facts"]["batch_bottle"]=code
+            logging.info("BATCH_CONFLICT_RESOLVED cid=%s code=%s",cid,code)
+            bot.send_message(cid,"✅ Код на новом фото совпал с кодом коробки. Учту в отчёте.")
+        else:
+            logging.info("BATCH_CONFLICT_CONFIRMED cid=%s bottle=%s box=%s",cid,code,s["facts"].get("batch_box"))
+            bot.send_message(cid,"📥 Получено. Расхождение кодов флакона и коробки подтверждается — будет учтено в отчёте.")
+        ni=first_open(s)
+        if ni>=0:
+            bot.send_message(cid,step_msg(s,ni))
+        else:
+            end_chain(cid)
+        return
     cur=first_open(s)
     if cur>=0:
         cur_line="%d. %s. Каким должен быть кадр: %s"%(cur+1,s["queue"][cur],hint_for(s["queue"][cur],s.get("ff","default"),obj))
@@ -2166,6 +2217,13 @@ def process_image(cid,s,b64,comp):
                 else:
                     s["facts"]["batch_box"]=code
                     micro_round(cid,s)
+                    nb=norm_code(s["facts"].get("batch_box")); nbt=norm_code(s["facts"].get("batch_bottle"))
+                    if nb and nbt and len(nb)==len(nbt):
+                        diff=[i for i in range(len(nb)) if nb[i]!=nbt[i]]
+                        if len(diff)==1 and next((g for g in GROUPS if {nb[diff[0]],nbt[diff[0]]}<=g),None):
+                            s["batch_conflict"]=True
+                            bot.send_message(cid,"📥 Коды флакона и коробки разошлись в одном похожем символе. Чтобы исключить ошибку чтения, переснимите дно флакона макро при рассеянном свете и пришлите следующим сообщением.")
+
                 logging.info("BATCH_FIXED cid=%s n=%d code=%s",cid,n,code)
             accept_step(cid,s,n,b64)
             return
