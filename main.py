@@ -204,8 +204,10 @@ def save_ref_store(d):
 
 CAT_INDEX={}
 CAT_KEYS=[]
+BRAND_INDEX={}
+NAME_INDEX={}
 def load_catalog():
-    global CAT_KEYS
+    global CAT_KEYS,BRAND_INDEX,NAME_INDEX
     try:
         with open(CATALOG_VOL,encoding="utf-8") as f:
             data=json.load(f)
@@ -214,6 +216,13 @@ def load_catalog():
             for k in keys:
                 if k: CAT_INDEX[k]=rec
         CAT_KEYS=list(CAT_INDEX.keys())
+        bi={}; ni={}
+        for rec in data:
+            b=norm_name(rec.get("brand",""))
+            if b: bi.setdefault(b,[]).append(rec)
+            n=norm_name(rec.get("name",""))
+            if n: ni.setdefault(n,[]).append(rec)
+        BRAND_INDEX=bi; NAME_INDEX=ni
         logging.info("CATALOG loaded recs=%d keys=%d",len(data),len(CAT_KEYS))
     except Exception:
         logging.exception("catalog load (file optional)")
@@ -226,6 +235,56 @@ def catalog_match(t):
     if k in CAT_INDEX: return CAT_INDEX[k]
     c=difflib.get_close_matches(k,CAT_KEYS,n=1,cutoff=0.85)
     return CAT_INDEX[c[0]] if c else None
+ASK_NAME_TEXT="Напишите название аромата — оно на флаконе или коробке (например, Ode to Dullness)."
+ASK_BRAND_TEXT="Уточните бренд — например, Juliette Has a Gun."
+
+def brand_match(t):
+    k=norm_name(t)
+    if not k: return None
+    if k in BRAND_INDEX: return BRAND_INDEX[k]
+    c=difflib.get_close_matches(k,list(BRAND_INDEX.keys()),n=1,cutoff=0.85)
+    return BRAND_INDEX[c[0]] if c else None
+
+def name_substring(t):
+    k=norm_name(t)
+    if not k: return None,None
+    best=None
+    for n in NAME_INDEX:
+        if n and n in k and (best is None or len(n)>len(best)): best=n
+    if best is None: return None,None
+    return best,NAME_INDEX[best]
+
+def finish_name(cid,s,q,plain=False):
+    model=s.get("model") or QWEN_MODEL
+    try:
+        boxres=ask_qwen([],MODE_BOX.format(name=q),model,timeout=45,attempts=1,use_system=False,temperature=0)
+    except Exception:
+        logging.exception("mode_box")
+        boxres="ФОРМ-ФАКТОР: флакон с распылителем\nНАЗВАНИЕ: "+q
+    if plain:
+        corrected=parse(boxres,"НАЗВАНИЕ") or q
+        if corrected.lower()!=q.lower():
+            s["name"]=corrected
+            bot.send_message(cid,f"Принято: {corrected} (исправлено из «{q}»). Если неверно — напишите «Начать заново».")
+    s["ff"]=norm_ff(parse(boxres,"ФОРМ-ФАКТОР"))
+    s["stage"]="box"
+    bot.send_message(cid,"Что проверяем?",reply_markup=kb_obj())
+
+def accept_design(cid,s,q,rec):
+    s["name"]=rec.get("name",q)
+    s["brand"]=rec.get("brand","")
+    s["design_rec"]=rec
+    logging.info("FUNNEL name cid=%s name=%s catalog=hit",cid,s["name"])
+    label=s["name"]+(" ("+s["brand"]+")" if s["brand"] else "")
+    bot.send_message(cid,f"Принято: {label}.")
+    finish_name(cid,s,q)
+
+def proceed_plain(cid,s,q,brand):
+    s["name"]=q
+    if brand: s["brand"]=brand
+    s["design_rec"]=None
+    logging.info("FUNNEL name cid=%s name=%s catalog=miss",cid,q)
+    finish_name(cid,s,q,plain=True)
 
 SYSTEM="""Ты — экспертная система разбора LEGIT·CHECK (парфюмерия). Анализируешь фото продукта по чек-листу и даёшь структурированные ответы на русском.
 
@@ -584,7 +643,7 @@ def save_session(cid,s):
         snap={"name":s.get("name",""),"photos":s.get("photos",[]),
         "obj":s.get("obj",""),"ff":s.get("ff","default"),
         "cannot":s.get("cannot",[]),"tariff":s.get("tariff",""),
-        "model":s.get("model") or QWEN_MODEL,"facts":s.get("facts",{})}
+        "model":s.get("model") or QWEN_MODEL,"facts":s.get("facts",{}),"design_rec":s.get("design_rec")}
         with open(sess_path(cid),"w",encoding="utf-8") as f:
             json.dump(snap,f)
     except Exception:
@@ -1660,7 +1719,7 @@ def design_diff(ref,cli):
 
 def design_lines(s):
     out={"01":[],"02":[],"05":[]}
-    rec=catalog_match(s.get("name") or "")
+    rec=s.get("design_rec")
     d=(rec or {}).get("design") if rec else None
     if not d or d.get("status") not in ("auto","confirmed"): return out
     ref=d.get("fields") or {}
@@ -2149,36 +2208,66 @@ def text(m):
             return
         do_recheck(cid,s,n,s["rc_photo"])
         return
+    if s["stage"]=="ask_name":
+        pb=s.get("pending_brand") or []
+        keys=[norm_name(r.get("name","")) for r in pb]
+        kn=norm_name(t)
+        hit=None
+        if kn in keys:
+            hit=pb[keys.index(kn)]
+        else:
+            c=difflib.get_close_matches(kn,keys,n=1,cutoff=0.85)
+            if c: hit=pb[keys.index(c[0])]
+        if hit:
+            accept_design(cid,s,hit.get("name",""),hit)
+        else:
+            proceed_plain(cid,s,t,"")
+        return
+    if s["stage"]=="ask_brand":
+        pn=s.get("pending_name") or ""
+        cands=NAME_INDEX.get(pn,[])
+        bm=brand_match(t)
+        hit=next((r for r in cands if bm and r in bm),None)
+        if hit:
+            accept_design(cid,s,pn,hit)
+        else:
+            proceed_plain(cid,s,pn,bm[0].get("brand","") if bm else "")
+        return
     if s["stage"]=="name":
         low=t.lower()
         if "?" in t or low in ("привет","здравствуйте","добрый день","добрый вечер","хай","ку") or low.startswith(("что это","как работает","сколько стоит","цена","кто ты","что умеешь")):
             bot.send_message(cid,HELP_TEXT)
             return
+        k=norm_name(t)
         rec=catalog_match(t)
         if rec:
-            s["name"]=rec.get("name",t)
-            s["brand"]=rec.get("brand","")
-            label=s["name"]+(" ("+s["brand"]+")" if s["brand"] else "")
-            bot.send_message(cid,f"Принято: {label}.")
-            q=s["name"]
+            name_part=norm_name(rec.get("name",""))
         else:
-            s["name"]=t
-            q=t
-        logging.info("FUNNEL name cid=%s name=%s catalog=%s",cid,t,"hit" if rec else "miss")
-        model=s.get("model") or QWEN_MODEL
-        try:
-            boxres=ask_qwen([],MODE_BOX.format(name=q),model,timeout=45,attempts=1,use_system=False,temperature=0)
-        except Exception:
-            logging.exception("mode_box")
-            boxres="ФОРМ-ФАКТОР: флакон с распылителем\nНАЗВАНИЕ: "+q
-        if not rec:
-            corrected=parse(boxres,"НАЗВАНИЕ") or t
-            if corrected.lower()!=t.lower():
-                s["name"]=corrected
-                bot.send_message(cid,f"Принято: {corrected} (исправлено из «{t}»). Если неверно — напишите «Начать заново».")
-        s["ff"]=norm_ff(parse(boxres,"ФОРМ-ФАКТОР"))
-        s["stage"]="box"
-        bot.send_message(cid,"Что проверяем?",reply_markup=kb_obj())
+            name_part,recs=name_substring(t)
+            if recs: rec=recs[0]
+        if rec:
+            if name_part in k:
+                rem=k.replace(name_part,"",1).strip()
+            elif difflib.SequenceMatcher(None,k,name_part).ratio()>=0.85:
+                rem=""
+            else:
+                rem=k
+            bm=brand_match(rem) if rem else None
+            if rem and bm and rec in bm:
+                accept_design(cid,s,rec.get("name",""),rec)
+            else:
+                s["pending_name"]=name_part; s["stage"]="ask_brand"
+                bot.send_message(cid,ASK_BRAND_TEXT)
+            return
+        bm=brand_match(t)
+        if bm:
+            if len(bm)==1:
+                accept_design(cid,s,bm[0].get("name",""),bm[0])
+            else:
+                s["pending_brand"]=bm; s["stage"]="ask_name"
+                bot.send_message(cid,ASK_NAME_TEXT)
+            return
+        proceed_plain(cid,s,t,"")
         return
     if s["stage"]=="box":
         bot.send_message(cid,"Нажмите кнопку: «Флакон без коробки» или «Флакон с коробкой».")
