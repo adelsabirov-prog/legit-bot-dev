@@ -36,6 +36,12 @@ DELAY_EXP=15*60
 DELAY_STD=3*3600
 
 os.makedirs(CASES_DIR,exist_ok=True)
+from logging.handlers import RotatingFileHandler
+TAIL_LOG=os.path.join(CASES_DIR,"tail.log")
+_th=RotatingFileHandler(TAIL_LOG,maxBytes=200*1024,backupCount=1,encoding="utf-8")
+_th.setFormatter(logging.Formatter("%(asctime)s,%(msecs)03d %(levelname)s %(message)s",datefmt="%Y-%m-%d %H:%M:%S"))
+_th.setLevel(logging.INFO)
+logging.getLogger().addHandler(_th)
 
 FONT_PATH=None
 for _p in ("arial.ttf","/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"):
@@ -1126,13 +1132,14 @@ def crop_b64(b64,box):
     return base64.b64encode(buf.getvalue()).decode()
 
 def fetch_main_photo(url):
-    r=requests.get(url,timeout=30,headers={"User-Agent":"Mozilla/5.0 (X11; Linux x86_64) legitcheck-ref-bot"})
+    hdr={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36","Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,image/*;q=0.8","Accept-Language":"ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"}
+    r=requests.get(url,timeout=30,headers=hdr)
     r.raise_for_status()
     m=re.search(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"',r.text) or re.search(r'<meta[^>]+content="([^"]+)"[^>]+property="og:image"',r.text)
     if not m: return None
     src=m.group(1)
     if src.startswith("//"): src="https:"+src
-    im=requests.get(src,timeout=30)
+    im=requests.get(src,timeout=30,headers={"User-Agent":hdr["User-Agent"]})
     im.raise_for_status()
     return downscale_b64(base64.b64encode(im.content).decode(),1600)
 
@@ -1146,12 +1153,23 @@ def process_ref_line(line):
     official=parts[3] if len(parts)>3 else None
     m=re.search(r"-(\d+)\.html",url)
     source="fragrantica/"+(m.group(1) if m else norm_name(name))
-    photo=fetch_main_photo(url)
-    if not photo:
-        logging.warning("REF no og:image %s",url); return source+":no_photo"
-    d=transcribe_design(photo)
-    if not d:
-        logging.warning("REF transcribe fail %s",url); return source+":fail"
+    d=None; photo=None; primary=""
+    if official:
+        try:
+            op=fetch_main_photo(official)
+            if op:
+                od=transcribe_design(op)
+                if od: d,photo,primary=od,op,"official"
+        except Exception:
+            logging.exception("REF official fetch")
+    if d is None:
+        photo=fetch_main_photo(url)
+        if not photo:
+            logging.warning("REF no og:image %s",url); return source+":no_photo"
+        d=transcribe_design(photo)
+        if not d:
+            logging.warning("REF transcribe fail %s",url); return source+":fail"
+        primary="fragrantica"
     crops={}
     for key in ("label_bbox","cap_bbox"):
         bb=d.get(key)
@@ -1159,16 +1177,16 @@ def process_ref_line(line):
             try: crops[key.replace("_bbox","")]=crop_b64(photo,[int(v) for v in bb])
             except Exception: pass
     status="auto"
-    if official:
+    if primary=="official":
         try:
-            op=fetch_main_photo(official)
-            if op:
-                od=transcribe_design(op)
-                if od and design_hard(od,d):
+            fp=fetch_main_photo(url)
+            if fp:
+                fd=transcribe_design(fp)
+                if fd and design_hard(fd,d):
                     status="review"
                     logging.info("REF cross mismatch %s -> review",source)
         except Exception:
-            logging.exception("REF official fetch")
+            logging.exception("REF fragrantica cross")
     cat=load_catalog_list()
     rec=next((r for r in cat if norm_name(r.get("name",""))==norm_name(name)),None)
     if not rec:
@@ -1180,7 +1198,7 @@ def process_ref_line(line):
     store[source]={"photo":photo,"crops":crops}
     save_ref_store(store)
     load_catalog()
-    logging.info("REF done %s status=%s",source,status)
+    logging.info("REF done %s status=%s primary=%s",source,status,primary)
     return source+":"+status
 
 def ref_autorun():
@@ -1219,34 +1237,53 @@ def ask_qwen(images,user_text,model,timeout=120,attempts=2,use_system=True,tempe
     messages=[]
     if use_system: messages.append({"role":"system","content":SYSTEM})
     messages.append({"role":"user","content":content})
-    body={"model":model,"messages":messages}
-    if temperature is not None:
-        body["temperature"]=temperature
-    r=None
-    for attempt in range(attempts):
+    fallback=QWEN3_MODEL if model==QWEN_MODEL else QWEN_MODEL
+    cur=model; fell=False
+    r=None; attempt=0
+    while attempt<attempts:
+        body={"model":cur,"messages":messages}
+        if temperature is not None: body["temperature"]=temperature
         try:
-            r=requests.post(BASE+"/chat/completions",
-                headers={"Authorization":"Bearer "+QWEN_KEY,"Content-Type":"application/json"},
-                json=body,timeout=timeout)
+            r=requests.post(BASE+"/chat/completions",headers={"Authorization":"Bearer "+QWEN_KEY,"Content-Type":"application/json"},json=body,timeout=timeout)
         except requests.exceptions.RequestException as e:
             logging.error("QWEN NET %s",e)
-            if attempt<attempts-1:
-                time.sleep(3)
+            attempt+=1
+            if attempt>=attempts: raise
+            time.sleep(3); continue
+        if r.status_code==429:
+            logging.error("QWEN RETRY 429 %s",r.text[:500])
+            ra=5
+            try: ra=float((r.json().get("error",{}).get("metadata",{}) or {}).get("retry_after_seconds") or 5)
+            except Exception: pass
+            time.sleep(min(max(ra,5),30))
+            if not fell:
+                fell=True; cur=fallback
+                logging.info("QWEN FALLBACK %s -> %s",model,cur)
                 continue
-            raise
-        if r.status_code in (429,500,502,503):
+            attempt+=1; continue
+        if r.status_code in (500,502,503):
             logging.error("QWEN RETRY %s %s",r.status_code,r.text[:500])
-            if attempt<attempts-1:
-                time.sleep(4)
-                continue
+            attempt+=1
+            if attempt>=attempts: break
+            time.sleep(4); continue
         break
     if r.status_code!=200:
         logging.error("QWEN ERROR %s %s",r.status_code,r.text[:1500])
     r.raise_for_status()
     d=r.json()
-    if "choices" not in d:
-        logging.error("QWEN NOCHOICES model=%s body=%s",model,r.text[:800])
-        raise ValueError("no choices")
+    if "choices" not in d or not d["choices"]:
+        logging.error("QWEN NOCHOICES model=%s body=%s",cur,r.text[:800])
+        time.sleep(4)
+        body={"model":cur,"messages":messages}
+        if temperature is not None: body["temperature"]=temperature
+        r=requests.post(BASE+"/chat/completions",headers={"Authorization":"Bearer "+QWEN_KEY,"Content-Type":"application/json"},json=body,timeout=timeout)
+        if r.status_code!=200:
+            logging.error("QWEN ERROR %s %s",r.status_code,r.text[:1500])
+            r.raise_for_status()
+        d=r.json()
+        if "choices" not in d or not d["choices"]:
+            logging.error("QWEN NOCHOICES2 model=%s body=%s",cur,r.text[:800])
+            raise ValueError("no choices")
     return d["choices"][0]["message"]["content"]
 
 def downscale_b64(raw,limit):
@@ -1698,7 +1735,11 @@ def do_report(cid):
         rep=ask_qwen(s["photos"],prompt,model,timeout=240,attempts=2,temperature=0.2)
     except Exception:
         logging.exception("mode2")
-        bot.send_message(cid,"⚠️ Сервис временно перегружен. Попробуйте ещё раз через минуту.")
+        if s.get("paid"):
+            add_job(cid,60)
+            bot.send_message(cid,"⚠️ Сервис временно перегружен. Отчёт снова поставлен в очередь и придёт автоматически; платить повторно не нужно.")
+        else:
+            bot.send_message(cid,"⚠️ Сервис временно перегружен. Попробуйте ещё раз через минуту.")
         return
     rep=re.sub(r"[➖\-−–—―]\s*не проверяется","➖ не проверяется",rep)
     rep=re.sub(r"(0[1-5])\s*[—–\-−―]\s*",r"\1 ➖ ",rep)
@@ -2345,6 +2386,34 @@ def ref_set_status(src,stt):
         load_catalog()
     except Exception:
         logging.exception("ref status")
+
+def _read_tail(n):
+    try:
+        with open(TAIL_LOG,"rb") as f:
+            f.seek(0,os.SEEK_END)
+            size=f.tell()
+            f.seek(max(0,size-200*1024))
+            data=f.read().decode("utf-8",errors="replace")
+        return "\n".join(data.splitlines()[-n:])
+    except Exception:
+        logging.exception("tail read")
+        return ""
+
+@bot.message_handler(commands=["taillog"])
+def cmd_taillog(m):
+    cid=m.chat.id
+    if not is_owner(cid): return
+    n=150
+    parts=m.text.split()
+    if len(parts)>1 and parts[1].isdigit(): n=int(parts[1])
+    txt=_read_tail(max(1,min(n,2000)))
+    if not txt:
+        bot.send_message(cid,"Лог пуст."); return
+    if len(txt)<=4096:
+        bot.send_message(cid,"<pre>"+esc(txt)+"</pre>",parse_mode="HTML")
+    else:
+        bio=io.BytesIO(txt.encode("utf-8")); bio.name="tail.txt"
+        bot.send_document(cid,bio,caption="tail: последние %d строк"%n)
 
 threading.Thread(target=payment_watcher,daemon=True).start()
 threading.Thread(target=ref_autorun,daemon=True).start()
