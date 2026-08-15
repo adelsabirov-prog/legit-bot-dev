@@ -2191,7 +2191,7 @@ def text(m):
     else:
         bot.send_message(cid,"Напишите «Начать заново», чтобы начать проверку.")
 
-@bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report","restart","close","fb_up","fb_down","skills","obj_bottle","obj_both","model_switch","paycheck") or c.data.startswith("rc_"))
+@bot.callback_query_handler(func=lambda c: c.data in ("std","exp","report","restart","close","fb_up","fb_down","skills","obj_bottle","obj_both","model_switch","paycheck") or c.data.startswith("rc_") or c.data.startswith("ref_"))
 def cb(c):
     cid=c.message.chat.id; s=st(cid)
     if c.data.startswith("ref_ok:"):
