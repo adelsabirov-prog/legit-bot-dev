@@ -2507,15 +2507,15 @@ def cmd_refcheck(m):
     seen=set(); uniq=[]
     for r in CAT_INDEX.values():
         d=(r.get("design") or {})
-        if d.get("status")=="auto" and d.get("source") not in seen:
+        if d.get("status") in ("auto","review") and d.get("source") not in seen:
             seen.add(d.get("source")); uniq.append(r)
     if not uniq:
-        bot.send_message(cid,"Нет эталонов со статусом auto."); return
+        bot.send_message(cid,"Нет эталонов со статусом auto/review."); return
     for r in _rnd.sample(uniq,min(n,len(uniq))):
         d=r["design"]; src=d["source"]
         photo=load_ref_store().get(src,{}).get("photo")
         f=d.get("fields") or {}
-        txt="СПОТ-ЧЕК · "+r.get("name","")+" ("+src+")\n"+"\n".join(f"{k}: {v}" for k,v in f.items() if v)
+        txt="СПОТ-ЧЕК · "+r.get("name","")+" ("+src+") · статус: "+d.get("status","")+"\n"+"\n".join(f"{k}: {v}" for k,v in f.items() if v)
         kb=types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("✅ Подтвердить",callback_data="ref_ok:"+src),types.InlineKeyboardButton("❌ Сбросить",callback_data="ref_no:"+src))
         if photo:
